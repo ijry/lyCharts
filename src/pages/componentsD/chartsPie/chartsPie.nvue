@@ -1,0 +1,91 @@
+<template>
+    <view class="u-page">
+      <view class="u-page__item">
+          <text class="u-page__item__title">基础饼图</text>
+          <view class="u-page__item__content">
+            <ly-charts-pie :options="pieOptions" width="750rpx"></ly-charts-pie>
+          </view>
+      </view>
+      <view class="u-page__item">
+          <text class="u-page__item__title">环形饼图</text>
+          <view class="u-page__item__content">
+            <ly-charts-pie :options="pieOptions2" width="750rpx"></ly-charts-pie>
+          </view>
+      </view>
+  </view>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      pieOptions: {
+        title: {
+            text: 'Referer of a Website',
+            subtext: 'Fake Data',
+            left: 'center'
+        },
+        series: [{
+          name: 'Nightingale Chart',
+          type: 'pie',
+          itemStyle: {
+            borderRadius: 10,
+            borderColor: '#fff',
+            borderWidth: 2
+          },
+          data: [
+            { name: '分类一', value: 30 },
+            { name: '分类二', value: 25 },
+            { name: '分类三', value: 20 },
+            { name: '分类四', value: 15 },
+            { name: '分类五', value: 10 }
+          ]
+        }],
+        legend: {
+          show: true,
+          bottom: 20
+        }
+      },
+      pieOptions2: {
+        title: {
+            text: 'Referer of a Website',
+            subtext: 'Fake Data',
+            left: 'center'
+        },
+        series: [{
+          name: 'Nightingale Chart',
+          type: 'pie',
+          radius: ['50%', '65%'],
+          itemStyle: {
+            borderRadius: 10,
+            borderColor: '#fff',
+            borderWidth: 2
+          },
+          data: [
+            { name: '分类一', value: 30 },
+            { name: '分类二', value: 25 },
+            { name: '分类三', value: 20 },
+            { name: '分类四', value: 15 },
+            { name: '分类五', value: 10 }
+          ]
+        }],
+        legend: {
+          show: true,
+          bottom: 20
+        }
+      }
+    };
+  },
+  methods: {
+  }
+};
+</script>
+
+<style lang="scss" scoped>
+  .u-page__item {
+      margin-bottom: 15px;
+  }
+  .u-page__item__title {
+      margin-bottom: 10px;
+  }
+</style>

@@ -1,0 +1,299 @@
+<template>
+	<view class="u-demo">
+		<view class="u-demo-wrap">
+			<view class="u-demo-title">演示</view>
+			<view class="u-demo-area">
+				<u-toast ref="uToast"></u-toast>
+				
+				<view class="u-demo-item">
+					<text class="u-demo-title">基础仪表盘</text>
+					<ly-charts-gauge 
+						:width="300" 
+						:height="300" 
+						:options="gaugeOption1"
+					></ly-charts-gauge>
+				</view>
+				
+				<view class="u-demo-item">
+					<text class="u-demo-title">带进度条的仪表盘</text>
+					<ly-charts-gauge 
+						:width="300" 
+						:height="300" 
+						:options="gaugeOption2"
+					></ly-charts-gauge>
+				</view>
+				
+				<view class="u-demo-item">
+					<text class="u-demo-title">自定义样式的仪表盘</text>
+					<ly-charts-gauge 
+						:width="300" 
+						:height="300" 
+						:options="gaugeOption3"
+					></ly-charts-gauge>
+				</view>
+				
+				<view class="u-demo-item">
+					<text class="u-demo-title">带动画效果的仪表盘</text>
+					<ly-charts-gauge 
+						:width="300" 
+						:height="300" 
+						:options="gaugeOption4"
+					></ly-charts-gauge>
+				</view>
+
+				<view class="u-demo-item">
+					<text class="u-demo-title">多进度圆环仪表盘</text>
+					<ly-charts-gauge 
+						:width="260" 
+						:height="260" 
+						:options="gaugeOption5"
+					></ly-charts-gauge>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script>
+	export default {
+		data() {
+			return {
+				// 基础仪表盘配置
+				gaugeOption1: {
+					pointer: {
+						length: '75%',
+						width: 16
+					},
+					series: [{
+						type: 'gauge',
+						startAngle: 225,
+						endAngle: -45,
+						data: [{ value: 60, name: '速度' }]
+					}]
+				},
+				
+				// 带进度条的仪表盘配置
+				gaugeOption2: {
+					series: [{
+						type: 'gauge',
+						min: 0,
+						max: 240,
+						progress: {
+							show: true,
+							color: 'red'
+							// width: 12
+						},
+						detail: {
+							valueAnimation: false
+						},
+						animationDuration: 1000,
+						axisLine: {
+							lineStyle: {
+								width: 12,
+								color: [[1, '#eee']] // 圆环背景色
+							}
+						},
+						data: [{ value: 60, name: '功率' }]
+					}]
+				},
+				
+				// 自定义样式的仪表盘配置
+				gaugeOption3: {
+					series: [{
+						type: 'gauge',
+						progress: {
+							show: true,
+							width: 12
+						},
+						axisLine: {
+							lineStyle: {
+								width: 12,
+								color: [
+									[0.3, '#67C23A'],
+									[0.7, '#E6A23C'],
+									[1, '#F56C6C']
+								]
+							}
+						},
+						splitLine: {
+							splitNumber: 5,
+							length: 15,
+							lineStyle: {
+								width: 3,
+								color: '#999'
+							}
+						},
+						axisLabel: {
+							distance: 25,
+							color: '#666',
+							fontSize: 14
+						},
+						anchor: {
+							show: true,
+							size: 10,
+							itemStyle: {
+								borderWidth: 1,
+								borderColor: '#5572CA'
+							}
+						},
+						detail: {
+							show: true,
+							fontSize: 24,
+							color: '#333',
+							formatter: '{value}%'
+						},
+						data: [{ value: 20, name: '完成度' }]
+					}]
+				},
+				
+				// 带动画效果的仪表盘配置
+				gaugeOption4: {
+					series: [{
+						type: 'gauge',
+						progress: {
+							show: true,
+							width: 1
+						},
+						axisLine: {
+							splitNumber: 3,
+							lineStyle: {
+								width: 12,
+								color: [[1, '#f1f1f1']]
+							}
+						},
+						splitLine: {
+							length: 10,
+							lineStyle: {
+								width: 2,
+								color: '#999'
+							}
+						},
+						axisLabel: {
+							distance: 15,
+							color: '#666',
+							fontSize: 12
+						},
+						itemStyle: {
+							color: 'green'
+						},
+						anchor: {
+							show: true,
+							size: 8,
+							itemStyle: {
+								borderWidth: 1,
+								borderColor: '#5572CA'
+							}
+						},
+						detail: {
+							valueAnimation: true,
+							show: true,
+							fontSize: 25,
+							color: '#409EFF',
+							formatter: '{value}km/h',
+							offsetCenter: [0, 0]
+						},
+						data: [{ value: 65, name: '时速' }]
+					}]
+				},
+
+				// 多进度条圆环
+				gaugeOption5: {
+					series: [{
+						type: 'gauge',
+						min: 0,
+						max: 130,
+						progress: {
+							show: true,
+							// width: 12
+						},
+						startAngle: 270,
+						endAngle: -89,
+						pointer: {
+							show: false
+						},
+						detail: {
+							valueAnimation: true
+						},
+						axisTick: {
+							show: false
+						},
+						splitLine: {
+							show: false
+						},
+						animationDuration: 3000,
+						progress: {
+							show: true,
+							width: 38
+						},
+						axisLine: {
+							lineStyle: {
+								width: 40,
+								color: [[1, '#f7f7f7']]
+							}
+						},
+						data: [
+							{ value: 60, name: '功率' },
+							{ value: 120, name: '功率2' },
+							{ value: 90, name: '功率3' },
+							{ value: 80, name: '功率4' },
+							// { value: 80, name: '功率4' },
+							// { value: 80, name: '功率4' },
+						]
+					}]
+				}
+			}
+		},
+		mounted() {
+		  	// setTimeout(() => {
+			// 	this.gaugeOption2.series[0].data[0].value = 120;
+			// }, 800);
+			// setTimeout(() => {
+			// 	this.gaugeOption2.series[0].data[0].value = 240;
+			// }, 1000);
+			// setTimeout(() => {
+			// 	this.gaugeOption2.series[0].data[0].value = 70;
+			// }, 2200);
+		},
+		methods: {
+			
+		}
+	}
+</script>
+
+<style lang="scss" scoped>
+	.u-demo {
+		
+	}
+	
+	.u-demo-wrap {
+		padding: 20rpx;
+	}
+	
+	.u-demo-title {
+		font-size: 34rpx;
+		font-weight: bold;
+		color: #333;
+		margin-bottom: 20rpx;
+	}
+	
+	.u-demo-area {
+		padding: 20rpx;
+		background-color: #fff;
+		border-radius: 10rpx;
+	}
+	
+	.u-demo-item {
+		margin-bottom: 40rpx;
+		
+		&:last-child {
+			margin-bottom: 0;
+		}
+	}
+	
+	.u-demo-title {
+		font-size: 28rpx;
+		color: #666;
+		margin-bottom: 20rpx;
+		display: block;
+	}
+</style>
