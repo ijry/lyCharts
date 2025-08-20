@@ -1,5 +1,5 @@
-<p align="center">
-    <img alt="logo" src="https://uiadmin.net/lyCharts/common/logo.png" width="120" height="120" style="margin-bottom: 10px;">
+<p align="center">[]
+    <img alt="logo" src="https://ly-charts.netlify.app/common/logo.png" width="120" height="120" style="margin-bottom: 10px;">
 </p>
 <h3 align="center" style="margin: 30px 0 30px;font-weight: bold;font-size:40px;">零云®lyCharts</h3>
 <h3 align="center">新一代跨端uni-app图标库</h3>
@@ -8,18 +8,18 @@
 
 零云®lyCharts，是[uni-app](https://uniapp.dcloud.io/)生态优秀的图表库，全面的组件和便捷的接口会让您信手拈来，如鱼得水。
 
-## [官方文档：https://ijry.github.io/lyCharts/](https://ijry.github.io/lyCharts/)
+## [官方文档：https://ly-charts.netlify.app/](https://ly-charts.netlify.app/)
 
 ## 链接
 
-- [官方文档](https://ijry.github.io/lyCharts/)
-- [更新日志](https://ijry.github.io/lyCharts/components/changelog.html)
-- [升级指南](https://ijry.github.io/lyCharts/components/changeGuide.html)
-- [关于我们](https://ijry.github.io/lyCharts/cooperation/about.html)
+- [官方文档](https://ly-charts.netlify.app/)
+- [更新日志](https://ly-charts.netlify.app/guide/changelog.html)
+- [升级指南](https://ly-charts.netlify.app/guide/changeGuide.html)
+- [关于我们](https://ly-charts.netlify.app/cooperation/about.html)
 
 ## 交流反馈
 
-欢迎加入我们的QQ群交流反馈：[点此跳转](https://ijry.github.io/lyCharts/components/addQQGroup.html)
+欢迎加入我们的QQ群交流反馈：[点此跳转](https://ly-charts.netlify.app/lyCharts/guide/addQQGroup.html)
 
 ## 关于PR
 

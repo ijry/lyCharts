@@ -53,7 +53,7 @@
       "client": {
         "uni-app": {
           "vue": {
-            "vue2": "-",
+            "vue2": "√",
             "vue3": "√"
           },
           "web": {
@@ -63,8 +63,8 @@
           "app": {
             "vue": "√",
             "nvue": "√",
-            "android": "-",
-            "ios": "-",
+            "android": "√",
+            "ios": "√",
             "harmony": "√"
           },
           "mp": {
