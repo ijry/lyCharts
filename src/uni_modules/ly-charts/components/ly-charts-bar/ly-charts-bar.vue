@@ -1,6 +1,5 @@
-<!-- components/u-charts-bar/u-charts-bar.vue -->
 <template>
-  <view class="u-charts-bar" :style="{ width: containerWidth, height: containerHeight }">
+  <view class="up-charts-bar" :style="{ width: containerWidth, height: containerHeight }">
     <canvas 
       class="chart-canvas" 
       :id="canvasId" 
@@ -16,7 +15,7 @@
 import chartHelper from '../../libs/util/chartHelper.js';
 
 export default {
-  name: 'BarChart',
+  name: 'up-charts-bar',
   props: {
     // ECharts 风格的配置项
     option: {
@@ -72,6 +71,11 @@ export default {
     });
   },
   methods: {
+    /**
+     * 初始化画布
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     initCanvas() {
       try {
         const query = uni.createSelectorQuery().in(this);
@@ -97,6 +101,12 @@ export default {
       }
     },
     
+    /**
+     * 绘制图表
+     * @param {Object} option - 图表配置项
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawChart(option) {
       if (!this.ctx || !option) return;
       
@@ -176,7 +186,19 @@ export default {
       }
     },
     
-    // 绘制山峰形状的柱子 (三角形)
+    /**
+     * 绘制山峰形状的柱子 (三角形)
+     * @param {Object} ctx - canvas上下文
+     * @param {Number} x - x坐标
+     * @param {Number} y - y坐标
+     * @param {Number} width - 宽度
+     * @param {Number} height - 高度
+     * @param {String} color - 颜色
+     * @param {String} borderColor - 边框颜色
+     * @param {Number} borderWidth - 边框宽度
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawMountainBar(ctx, x, y, width, height, color, borderColor, borderWidth) {
       ctx.beginPath();
       ctx.setFillStyle(color);
@@ -207,7 +229,19 @@ export default {
       }
     },
     
-    // 绘制圆角山峰形状的柱子
+    /**
+     * 绘制圆角山峰形状的柱子
+     * @param {Object} ctx - canvas上下文
+     * @param {Number} x - x坐标
+     * @param {Number} y - y坐标
+     * @param {Number} width - 宽度
+     * @param {Number} height - 高度
+     * @param {String} color - 颜色
+     * @param {String} borderColor - 边框颜色
+     * @param {Number} borderWidth - 边框宽度
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawRoundedMountainBar(ctx, x, y, width, height, color, borderColor, borderWidth) {
       ctx.beginPath();
       ctx.setFillStyle(color);
@@ -253,7 +287,19 @@ export default {
       }
     },
     
-    // 绘制尖角山峰形状的柱子
+    /**
+     * 绘制尖角山峰形状的柱子
+     * @param {Object} ctx - canvas上下文
+     * @param {Number} x - x坐标
+     * @param {Number} y - y坐标
+     * @param {Number} width - 宽度
+     * @param {Number} height - 高度
+     * @param {String} color - 颜色
+     * @param {String} borderColor - 边框颜色
+     * @param {Number} borderWidth - 边框宽度
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawSharpMountainBar(ctx, x, y, width, height, color, borderColor, borderWidth) {
       ctx.beginPath();
       ctx.setFillStyle(color);
@@ -299,7 +345,19 @@ export default {
       }
     },
 
-    // 绘制自然山峰形状的柱子 (重叠样式，后一个遮挡前一个一点点)
+    /**
+     * 绘制自然山峰形状的柱子 (重叠样式，后一个遮挡前一个一点点)
+     * @param {Object} ctx - canvas上下文
+     * @param {Number} x - x坐标
+     * @param {Number} y - y坐标
+     * @param {Number} width - 宽度
+     * @param {Number} height - 高度
+     * @param {String} color - 颜色
+     * @param {String} borderColor - 边框颜色
+     * @param {Number} borderWidth - 边框宽度
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawRealMountainBar(ctx, x, y, width, height, color, borderColor, borderWidth) {
       ctx.beginPath();
       ctx.setFillStyle(color);
@@ -353,7 +411,20 @@ export default {
       }
     },
     
-    // 绘制圆角柱状形状的柱子
+    /**
+     * 绘制圆角柱状形状的柱子
+     * @param {Object} ctx - canvas上下文
+     * @param {Number} x - x坐标
+     * @param {Number} y - y坐标
+     * @param {Number} width - 宽度
+     * @param {Number} height - 高度
+     * @param {String} color - 颜色
+     * @param {String} borderColor - 边框颜色
+     * @param {Number} borderWidth - 边框宽度
+     * @param {Number} borderRadius - 圆角半径
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawRoundedBar(ctx, x, y, width, height, color, borderColor, borderWidth, borderRadius) {
       const radius = borderRadius ? borderRadius : Math.min(width / 2, height / 2);
       ctx.beginPath();
@@ -381,6 +452,18 @@ export default {
       }
     },
     
+    /**
+     * 绘制柱状图
+     * @param {Array} series - 系列数据
+     * @param {Array} xAxisData - x轴数据
+     * @param {Number} minY - y轴最小值
+     * @param {Number} maxY - y轴最大值
+     * @param {Number} adjustedYMin - 调整后的y轴最小值
+     * @param {Number} adjustedYMax - 调整后的y轴最大值
+     * @param {Number} xAxisPadding - x轴内边距
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     drawBars(series, xAxisData, minY, maxY, adjustedYMin, adjustedYMax, xAxisPadding = 10) {
       const chartWidth = this.canvasWidth - this.grid.left - this.grid.right;
       
@@ -733,7 +816,12 @@ export default {
       });
     },
     
-    // 触摸事件处理
+    /**
+     * 处理触摸开始事件
+     * @param {Object} e - 事件对象
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     handleTouchStart(e) {
       if (e.touches && e.touches.length > 0) {
         const touch = e.touches[0];
@@ -742,11 +830,23 @@ export default {
       }
     },
     
+    /**
+     * 处理触摸移动事件
+     * @param {Object} e - 事件对象
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     handleTouchMove(e) {
       // 阻止默认行为，避免页面滚动
       e.preventDefault && e.preventDefault();
     },
     
+    /**
+     * 处理触摸结束事件
+     * @param {Object} e - 事件对象
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     handleTouchEnd(e) {
       if (e.changedTouches && e.changedTouches.length > 0) {
         const touch = e.changedTouches[0];
@@ -763,6 +863,13 @@ export default {
       }
     },
     
+    /**
+     * 处理图表点击事件
+     * @param {Number} x - 点击的x坐标
+     * @param {Number} y - 点击的y坐标
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     handleChartClick(x, y) {
       // 查找最近的数据点
       let minDistance = Infinity;
@@ -807,7 +914,13 @@ export default {
       }
     },
     
-    // 提供类似 ECharts 的 setOption 方法
+    /**
+     * 设置图表选项（类似 ECharts 的 setOption 方法）
+     * @param {Object} option - 图表配置项
+     * @param {Boolean} notMerge - 是否不合并配置
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     setOption(option, notMerge = false) {
       if (notMerge) {
         this.drawChart(option);
@@ -819,12 +932,22 @@ export default {
       }
     },
     
-    // 提供类似 ECharts 的 resize 方法
+    /**
+     * 重置图表大小（类似 ECharts 的 resize 方法）
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     resize() {
       this.initCanvas();
     },
     
-    // 计算堆叠数据范围
+    /**
+     * 计算堆叠数据范围
+     * @param {Array} series - 系列数据
+     * @returns {Object} 包含 minY 和 maxY 的对象
+     * @author jry <ijry@qq.com>
+     * @created 2025-07-28
+     */
     calculateStackedDataRange(series) {
       let minY = 0;
       let maxY = 0;
@@ -889,7 +1012,7 @@ export default {
 </script>
 
 <style scoped>
-.u-charts-bar {
+.up-charts-bar {
   position: relative;
 }
 
