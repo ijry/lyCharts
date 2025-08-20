@@ -7,7 +7,7 @@
                 <ly-charts-radar
                     width="720rpx"
                     height="210px"
-                    :options="basicChartOptions"
+                    :option="basicChartOption"
                     @click="handleChartClick"
                 />
           </view>
@@ -19,7 +19,7 @@
                 <ly-charts-radar
                     width="720rpx"
                     height="250px"
-                    :options="filledChartOptions"
+                    :option="filledChartOption"
                     @click="handleChartClick"
                 />
           </view>
@@ -31,7 +31,7 @@
                 <ly-charts-radar
                     width="720rpx"
                     height="230px"
-                    :options="customGridOptions"
+                    :option="customGridOption"
                     @click="handleChartClick"
                 />
           </view>
@@ -43,7 +43,7 @@
                 <ly-charts-radar
                     width="720rpx"
                     height="230px"
-                    :options="circleChartOptions"
+                    :option="circleChartOption"
                     @click="handleChartClick"
                 />
           </view>
@@ -57,7 +57,7 @@ export default {
   data() {
     return {
       // 基础雷达图配置
-      basicChartOptions: {
+      basicChartOption: {
         title: {
           text: '基础雷达图'
         },
@@ -86,7 +86,7 @@ export default {
       },
       
       // 填充雷达图配置
-      filledChartOptions: {
+      filledChartOption: {
         title: {
           text: '填充雷达图'
         },
@@ -127,7 +127,7 @@ export default {
       },
       
       // 新增自定义网格背景色配置
-      customGridOptions: {
+      customGridOption: {
         title: {
           text: '自定义网格背景色'
         },
@@ -160,7 +160,7 @@ export default {
       },
       
       // 新增圆形雷达图配置
-      circleChartOptions: {
+      circleChartOption: {
         title: {
           text: '圆形雷达图'
         },

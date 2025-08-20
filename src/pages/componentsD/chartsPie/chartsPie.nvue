@@ -3,13 +3,13 @@
       <view class="u-page__item">
           <text class="u-page__item__title">基础饼图</text>
           <view class="u-page__item__content">
-            <ly-charts-pie :options="pieOptions" width="750rpx"></ly-charts-pie>
+            <ly-charts-pie :option="pieOption" width="750rpx"></ly-charts-pie>
           </view>
       </view>
       <view class="u-page__item">
           <text class="u-page__item__title">环形饼图</text>
           <view class="u-page__item__content">
-            <ly-charts-pie :options="pieOptions2" width="750rpx"></ly-charts-pie>
+            <ly-charts-pie :option="pieOption2" width="750rpx"></ly-charts-pie>
           </view>
       </view>
   </view>
@@ -19,7 +19,7 @@
 export default {
   data() {
     return {
-      pieOptions: {
+      pieOption: {
         title: {
             text: 'Referer of a Website',
             subtext: 'Fake Data',
@@ -46,7 +46,7 @@ export default {
           bottom: 20
         }
       },
-      pieOptions2: {
+      pieOption2: {
         title: {
             text: 'Referer of a Website',
             subtext: 'Fake Data',
