@@ -1,5 +1,5 @@
 <template>
-	<view class="u-charts-gauge">
+	<view class="up-charts-gauge">
 		<canvas 
 			:id="canvasId" 
 			:canvas-id="canvasId" 
@@ -12,7 +12,7 @@
 <script>
 import chartHelper from '../../libs/util/chartHelper.js';
 	export default {
-		name: "u-charts-gauge",
+		name: "up-charts-gauge",
 		props: {
 			// 图表宽度
 			width: {
@@ -25,7 +25,7 @@ import chartHelper from '../../libs/util/chartHelper.js';
 				default: 300
 			},
 			// 图表配置选项
-			options: {
+			option: {
 				type: Object,
 				default: () => ({})
 			}
@@ -46,7 +46,7 @@ import chartHelper from '../../libs/util/chartHelper.js';
 			}
 		},
 		watch: {
-			options: {
+			option: {
 				handler(newVal) {
 					console.log(newVal)
 					// 使用uview-plus自己的实现方式更新图表
@@ -59,6 +59,11 @@ import chartHelper from '../../libs/util/chartHelper.js';
 			this.init();
 		},
 		methods: {
+			/**
+			 * 初始化图表
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			init() {
 				// 获取容器尺寸
 				this.canvasWidth = Number(this.width);
@@ -66,17 +71,28 @@ import chartHelper from '../../libs/util/chartHelper.js';
 				
 				// 延迟确保DOM渲染完成
 				setTimeout(() => {
-					this.updateChart(this.options);
+					this.updateChart(this.option);
 				}, 100);
 			},
 			
+			/**
+			 * 绘制图表
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			drawChart() {
 				const ctx = uni.createCanvasContext(this.canvasId, this);
 				// 使用uview-plus自己的实现方式绘制仪表盘
 				this.drawGauge(ctx);
 			},
 			
-			// 角度360转弧度2PI的辅助函数
+			/**
+			 * 角度360转弧度2PI的辅助函数
+			 * @param {Number} angle - 角度值
+			 * @returns {Number} 弧度值
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			angleToRadBase(angle) {
 				if (angle >= 0) {
 					let normalizedAngle = angle / 360 * 2;
@@ -87,11 +103,17 @@ import chartHelper from '../../libs/util/chartHelper.js';
 				}
 			},
 			
+			/**
+			 * 绘制仪表盘
+			 * @param {Object} ctx - canvas上下文
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			drawGauge(ctx) {
 				const { width, height } = this;
 				const centerX = width / 2;
 				const centerY = height / 2;
-				const series = this.options.series && this.options.series.length > 0 ? this.options.series[0] : {};
+				const series = this.option.series && this.option.series.length > 0 ? this.option.series[0] : {};
 				const data = series.data && series.data.length > 0 ? series.data : [{ value: 0 }];
 				// 支持多个data
 				const values = data.map((item, index) => {
@@ -435,7 +457,13 @@ import chartHelper from '../../libs/util/chartHelper.js';
 				ctx.draw();
 			},
 			
-			// 添加动画方法
+			/**
+			 * 添加动画方法
+			 * @param {Number} targetValue - 目标值
+			 * @param {Number} duration - 动画持续时间(毫秒)
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			startAnimation(targetValue, duration = 1000) {
 				// 清除之前的动画
 				if (this.animationTimer) {
@@ -464,6 +492,12 @@ import chartHelper from '../../libs/util/chartHelper.js';
 				}, 16); // 约60fps
 			},
 			
+			/**
+			 * 更新图表
+			 * @param {Object} option - 图表配置项
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			updateChart(option) {
 				const series = option.series && option.series.length > 0 ? option.series[0] : {};
 				const data = series.data && series.data.length > 0 ? series.data : [{ value: 0 }];
@@ -516,17 +550,32 @@ import chartHelper from '../../libs/util/chartHelper.js';
 				}
 			},
 			
+			/**
+			 * 处理点击事件
+			 * @param {Object} e - 事件对象
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			tap(e) {
 				// 触发点击事件
 				this.$emit('click', e);
 			},
 			
-			// 获取图表实例
+			/**
+			 * 获取图表实例
+			 * @returns {null} 返回null（占位方法）
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			getChartInstance() {
 				return null;
 			},
 			
-			// 重新绘制图表
+			/**
+			 * 重新绘制图表
+			 * @author jry <ijry@qq.com>
+			 * @created 2025-08-05
+			 */
 			refresh() {
 				this.drawChart();
 			}
@@ -541,7 +590,7 @@ import chartHelper from '../../libs/util/chartHelper.js';
 </script>
 
 <style scoped>
-	.u-charts-gauge {
+	.up-charts-gauge {
 		display: flex;
 		justify-content: center;
 		align-items: center;

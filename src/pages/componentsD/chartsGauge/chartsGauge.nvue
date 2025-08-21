@@ -10,7 +10,7 @@
 					<ly-charts-gauge 
 						:width="300" 
 						:height="300" 
-						:options="gaugeOption1"
+						:option="gaugeOption1"
 					></ly-charts-gauge>
 				</view>
 				
@@ -19,7 +19,7 @@
 					<ly-charts-gauge 
 						:width="300" 
 						:height="300" 
-						:options="gaugeOption2"
+						:option="gaugeOption2"
 					></ly-charts-gauge>
 				</view>
 				
@@ -28,7 +28,7 @@
 					<ly-charts-gauge 
 						:width="300" 
 						:height="300" 
-						:options="gaugeOption3"
+						:option="gaugeOption3"
 					></ly-charts-gauge>
 				</view>
 				
@@ -37,7 +37,7 @@
 					<ly-charts-gauge 
 						:width="300" 
 						:height="300" 
-						:options="gaugeOption4"
+						:option="gaugeOption4"
 					></ly-charts-gauge>
 				</view>
 
@@ -46,7 +46,7 @@
 					<ly-charts-gauge 
 						:width="260" 
 						:height="260" 
-						:options="gaugeOption5"
+						:option="gaugeOption5"
 					></ly-charts-gauge>
 				</view>
 			</view>
