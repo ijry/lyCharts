@@ -2,21 +2,21 @@
   <view class="u-charts-pie" :style="{width: width}">
     <!-- 标题 -->
     <view 
-      v-if="options.title && options.title.show !== false" 
+      v-if="option.title && option.title.show !== false" 
       class="chart-title"
       :style="{
-        textAlign: options.title.left === 'center' ? 'center' : options.title.left === 'right' ? 'right' : 'left'
+        textAlign: option.title.left === 'center' ? 'center' : option.title.left === 'right' ? 'right' : 'left'
       }"
     >
       <text 
         class="main-title"
-        :style="{ color: options.title.textStyle?.color || '#333', fontSize: options.title.textStyle?.fontSize || 18 }"
-      >{{ options.title.text }}</text>
+        :style="{ color: option.title.textStyle?.color || '#333', fontSize: option.title.textStyle?.fontSize || 18 }"
+      >{{ option.title.text }}</text>
       <text 
-        v-if="options.title.subtext"
+        v-if="option.title.subtext"
         class="sub-title"
-        :style="{ color: options.title.subtextStyle?.color || '#666', fontSize: options.title.subtextStyle?.fontSize || 14 }"
-      >{{ options.title.subtext }}</text>
+        :style="{ color: option.title.subtextStyle?.color || '#666', fontSize: option.title.subtextStyle?.fontSize || 14 }"
+      >{{ option.title.subtext }}</text>
     </view>
     
     <canvas 
@@ -39,7 +39,7 @@ export default {
   name: 'u-charts-pie',
   props: {
     // 图表数据
-    options: {
+    option: {
       type: Object,
       default: () => ({})
     },
@@ -67,7 +67,7 @@ export default {
     };
   },
   watch: {
-    options: {
+    option: {
       handler(newVal) {
         if (this.isMount) {
           this.drawChart();
@@ -164,7 +164,7 @@ export default {
     
     // 绘制图表
     drawChart() {
-      if (!this.options || !Object.keys(this.options).length) return;
+      if (!this.option || !Object.keys(this.option).length) return;
       
       // 使用原生Canvas绘制饼图
       this.drawNativePie();
@@ -179,7 +179,7 @@ export default {
       ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
       
       // 获取数据
-      const series = this.options.series && this.options.series[0] || {};
+      const series = this.option.series && this.option.series[0] || {};
       const data = series.data || [];
       if (!data.length) return;
       
@@ -196,14 +196,14 @@ export default {
       let topLegendHeight = 0;
       let bottomLegendHeight = 0;
       
-      if (this.options.legend && this.options.legend.show !== false) {
+      if (this.option.legend && this.option.legend.show !== false) {
         // 简单估算图例尺寸
         const legendItemWidth = 80; // 假设每个图例项宽度为80px
         const legendItemHeight = 20; // 假设每个图例项高度为20px
         
         // 遵循ECharts规范，使用top、bottom、left、right控制图例位置
         // 支持数字（像素值）、百分比字符串或关键字
-        let legend = this.options.legend;
+        let legend = this.option.legend;
         const topValue = legend.top;
         const bottomValue = legend.bottom;
         const leftValue = legend.left;
@@ -217,7 +217,7 @@ export default {
         // 如果没有设置top或bottom，则默认放在底部
         const isBottomDefault = !hasTop && !hasBottom;
         
-        if (this.options.legend.orient === 'vertical') {
+        if (this.option.legend.orient === 'vertical') {
           const legendHeight = data.length * legendItemHeight;
           if (hasLeft) {
             leftLegendWidth = legendItemWidth;
@@ -353,7 +353,7 @@ export default {
       this.drawLabelsWithLines(ctx, sectorAngles, centerX, centerY, outerRadiusPx, defaultColors, data);
       
       // 绘制legend
-      if (this.options.legend && this.options.legend.show !== false) {
+      if (this.option.legend && this.option.legend.show !== false) {
         this.drawLegend(ctx, data, defaultColors);
       }
       
@@ -451,7 +451,7 @@ export default {
     
     // 绘制legend
     drawLegend(ctx, data, defaultColors) {
-      const legend = this.options.legend;
+      const legend = this.option.legend;
       if (!legend || legend.show === false) return;
       
       const itemHeight = 14;
@@ -639,7 +639,7 @@ export default {
             });
             
             // 触发tooltip事件
-            if (this.options.tooltip && this.options.tooltip.trigger === 'item') {
+            if (this.option.tooltip && this.option.tooltip.trigger === 'item') {
               this.$emit('tooltipShow', {
                 name: clickedData.name,
                 value: clickedData.value,
@@ -667,7 +667,7 @@ export default {
       if (this.chartInstance) {
         if (this.chartInstance.type === 'native-pie') {
           // 原生饼图更新数据
-          this.options.series[0].data = data;
+          this.option.series[0].data = data;
           this.drawNativePie();
         }
       }
