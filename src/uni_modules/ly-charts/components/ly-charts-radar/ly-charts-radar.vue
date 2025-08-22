@@ -23,7 +23,7 @@ export default {
   name: 'u-charts-radar',
   props: {
     // ECharts标准配置接口
-    options: {
+    option: {
       type: Object,
       required: true,
       default: () => ({})
@@ -62,8 +62,8 @@ export default {
     }
   },
   watch: {
-    // 监听options变化，重新渲染图表
-    options: {
+    // 监听option变化，重新渲染图表
+    option: {
       handler(newVal) {
         if (this.isMount) {
           this.drawChart();
@@ -160,7 +160,7 @@ export default {
     
     // 绘制图表
     drawChart() {
-      if (!this.options || !Object.keys(this.options).length) return;
+      if (!this.option || !Object.keys(this.option).length) return;
       
       // 使用原生Canvas绘制雷达图
       this.drawNativeRadar();
@@ -175,8 +175,8 @@ export default {
       ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
       
       // 获取雷达图配置
-      const radar = this.options.radar || {};
-      const series = this.options.series || []; // 支持多个系列
+      const radar = this.option.radar || {};
+      const series = this.option.series || []; // 支持多个系列
       // 兼容只传一个系列的情况
       const processedSeries = series.map(s => {
         if (Array.isArray(s)) {
@@ -190,7 +190,7 @@ export default {
       // 绘制标题
       let chartTop = 0;
       let titleHeight = 0;
-      if (this.options.title && this.options.title.show !== false) {
+      if (this.option.title && this.option.title.show !== false) {
         titleHeight = this.drawChartTitle(ctx);
         chartTop += titleHeight;
       }
@@ -201,7 +201,7 @@ export default {
       let chartLeft = 0;
       let chartRight = 0;
       let bottomHeight = 0;
-      if (this.options.legend && this.options.legend.show !== false) {
+      if (this.option.legend && this.option.legend.show !== false) {
         const legendInfo = this.drawChartLegend(ctx, chartTop, titleHeight);
         legendHeight = legendInfo.height;
         legendWidth = legendInfo.width;
@@ -209,7 +209,7 @@ export default {
         chartRight = legendInfo.right;
         
         // 如果图例在顶部或底部，需要调整图表顶部位置
-        if (this.options.legend.top != undefined) {
+        if (this.option.legend.top != undefined) {
            chartTop += legendHeight;
         } else {
             // 如果图表在底部
@@ -251,7 +251,7 @@ export default {
     
     // 绘制图表标题
     drawChartTitle(ctx) {
-      const title = this.options.title;
+      const title = this.option.title;
       if (!title || title.show === false) return 0;
       
       let titleHeight = 0;
@@ -292,13 +292,13 @@ export default {
     
     // 绘制图例
     drawChartLegend(ctx, top, titleHeight = 0) {
-      const legend = this.options.legend || {};
+      const legend = this.option.legend || {};
       if (legend.show === false) return { height: 0, width: 0, left: 0, right: 0 };
 
       // 优先使用chartHelper中的drawLegend方法
       try {
         // 准备legend数据
-        const series = this.options.series || [];
+        const series = this.option.series || [];
         const processedSeries = series.map(s => {
           if (Array.isArray(s)) {
             return { data: s };
@@ -367,7 +367,7 @@ export default {
     drawRadarGrid(ctx, centerX, centerY, maxRadius, indicators) {
       const numIndicators = indicators.length;
       // 修改: 支持splitNumber配置项，默认为5
-      const radar = this.options.radar || {};
+      const radar = this.option.radar || {};
       const levels = radar.splitNumber || 5;
       // 修改: 支持shape配置项，默认为polygon(多边形)
       const shape = radar.shape || 'polygon';
@@ -515,13 +515,13 @@ export default {
       const numIndicators = indicators.length;
       
       // 默认颜色列表
-      const defaultColors = this.options.color || [
+      const defaultColors = this.option.color || [
         '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de',
         '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc'
       ];
       
       // 获取雷达图配置中的 radius 设置
-      const radar = this.options.radar || {};
+      const radar = this.option.radar || {};
       let innerRadius = 0;
       let outerRadius = maxRadius;
       
@@ -672,7 +672,7 @@ export default {
       const numIndicators = indicators.length;
       
       // 获取雷达图配置中的 radius 设置
-      const radar = this.options.radar || {};
+      const radar = this.option.radar || {};
       let outerRadius = maxRadius;
       
       // 支持 ECharts 的 radius 配置
@@ -779,13 +779,13 @@ export default {
           // 原生雷达图更新数据
           // 支持更新整个series或只更新第一个系列的数据
           if (Array.isArray(data)) {
-            if (Array.isArray(this.options.series[0])) {
-              this.options.series[0] = data;
+            if (Array.isArray(this.option.series[0])) {
+              this.option.series[0] = data;
             } else {
-              this.options.series[0].data = data;
+              this.option.series[0].data = data;
             }
           } else {
-            this.options.series = data;
+            this.option.series = data;
           }
           this.drawNativeRadar();
         }
