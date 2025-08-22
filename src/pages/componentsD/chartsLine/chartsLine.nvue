@@ -7,7 +7,7 @@
                 ref="straightChart"
                 :option="straightOption" 
                 width="700rpx"
-                height="260px"
+                height="180px"
                 @click="onChartClick"
             />
           </view>
@@ -19,7 +19,7 @@
                 ref="smoothOption"
                 :option="smoothOption" 
                 width="700rpx"
-                height="260px"
+                height="180px"
                 @click="onChartClick"
             />
           </view>
@@ -31,7 +31,7 @@
                 ref="compareOption"
                 :option="compareOption" 
                 width="700rpx"
-                height="300px"
+                height="260px"
                 @click="onChartClick"
             />
           </view>
