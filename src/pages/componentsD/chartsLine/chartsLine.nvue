@@ -27,9 +27,9 @@
       <view class="u-page__item">
           <text class="u-page__item__title" style="margin-top: 0;">对比图</text>
           <view class="u-page__item__content">
-            <ly-charts-line 
+            <ly-charts-line
                 ref="compareOption"
-                :option="compareOption" 
+                :option="compareOption"
                 width="700rpx"
                 height="260px"
                 @click="onChartClick"
@@ -67,6 +67,11 @@ export default {
             smooth: false, // 直线模式
             lineStyle: {
               width: 2
+            },
+            label: {
+                show: true, // 显示标签
+                color: '#666',
+                position: 'top' // 标签的位置，可以是 'top', 'bottom', 'left', 'right' 等
             }
           }
         ]

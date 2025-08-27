@@ -153,8 +153,9 @@ export default {
         }
         
         // 绘制网格
+        const drawVerticalLines = false
         if (option.grid !== false) {
-          chartHelper.drawGrid(this.ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData.length, minY, maxY, true, xAxisPadding);
+          chartHelper.drawGrid(this.ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData.length, minY, maxY, drawVerticalLines, xAxisPadding);
         }
         
         // 绘制坐标轴
@@ -228,6 +229,11 @@ export default {
         const showSymbol = serie.showSymbol !== false;
         const smooth = serie.smooth === true;
         const lineWidth = serie.lineStyle?.width || 2;
+        // 获取标签配置
+        const label = serie.label || {};
+        const showLabel = label.show === true;
+        const labelColor = label.color || '#666';
+        const labelPosition = label.position || 'top';
         
         // 转换数据点为坐标
         const points = [];
@@ -287,6 +293,11 @@ export default {
               
               this.ctx.setFillStyle(color);
             });
+          }
+          
+          // 绘制标签
+          if (showLabel) {
+            this.drawLabels(points, labelColor, labelPosition);
           }
         }
       });
@@ -391,6 +402,47 @@ export default {
         
         this.ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
       }
+    },
+    
+    // 绘制标签
+    drawLabels(points, color, position) {
+      if (!points || points.length === 0) return;
+      
+      points.forEach(point => {
+        const label = point.value.toString();
+        this.ctx.setFontSize(10);
+        this.ctx.setFillStyle(color);
+        this.ctx.setTextAlign('center');
+        this.ctx.setTextBaseline('bottom');
+        
+        let x = point.x;
+        let y = point.y;
+        
+        // 根据位置调整标签坐标
+        switch (position) {
+          case 'top':
+            y -= 6;
+            break;
+          case 'bottom':
+            y += 6;
+            this.ctx.setTextBaseline('top');
+            break;
+          case 'left':
+            x -= 6;
+            this.ctx.setTextAlign('right');
+            this.ctx.setTextBaseline('middle');
+            break;
+          case 'right':
+            x += 6;
+            this.ctx.setTextAlign('left');
+            this.ctx.setTextBaseline('middle');
+            break;
+          default:
+            y -= 10;
+        }
+        
+        this.ctx.fillText(label, x, y);
+      });
     },
     
     // 触摸事件处理
