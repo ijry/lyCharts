@@ -223,17 +223,23 @@ class ChartHelper {
     ctx.strokeStyle = '#ccc';
     ctx.lineWidth = 1;
     
-    // X轴
-    ctx.beginPath();
-    ctx.moveTo(grid.left || 0, canvasHeight - (grid.bottom || 0));
-    ctx.lineTo((grid.left || 0) + chartWidth, canvasHeight - (grid.bottom || 0));
-    ctx.stroke();
+    // X轴（根据配置决定是否显示）
+    const showXAxisLine = xAxisOpt.axisLine && xAxisOpt.axisLine.show;
+    if (showXAxisLine !== undefined ? showXAxisLine : true) {
+        ctx.beginPath();
+        ctx.moveTo(grid.left || 0, canvasHeight - (grid.bottom || 0));
+        ctx.lineTo((grid.left || 0) + chartWidth, canvasHeight - (grid.bottom || 0));
+        ctx.stroke();
+    }
     
-    // Y轴
-    ctx.beginPath();
-    ctx.moveTo(grid.left || 0, grid.top || 0);
-    ctx.lineTo(grid.left || 0, canvasHeight - (grid.bottom || 0));
-    ctx.stroke();
+    // 绘制Y轴线（根据配置决定是否显示）
+    const showYAxisLine = yAxisOpt.axisLine && yAxisOpt.axisLine.show;
+    if (showYAxisLine !== undefined ? showYAxisLine : false) {
+        ctx.beginPath();
+        ctx.moveTo(grid.left || 0, grid.top || 0);
+        ctx.lineTo(grid.left || 0, canvasHeight - (grid.bottom || 0));
+        ctx.stroke();
+    }
     
     // 绘制X轴标签
     const xAxisLabelColor = (xAxisOpt && xAxisOpt.axisLabel && xAxisOpt.axisLabel.color) || '#666';

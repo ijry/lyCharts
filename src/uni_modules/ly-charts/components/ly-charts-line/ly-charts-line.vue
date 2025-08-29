@@ -157,7 +157,7 @@ export default {
         if (option.grid !== false) {
           chartHelper.drawGrid(this.ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData.length, minY, maxY, drawVerticalLines, xAxisPadding);
         }
-        
+
         // 绘制坐标轴
         chartHelper.drawAxis(this.ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData, minY, maxY, xAxis, yAxis, 'line', xAxisPadding);
         
