@@ -269,24 +269,26 @@ class ChartHelper {
     }
     
     // 绘制Y轴标签
-    const yAxisLabelColor = (yAxisOpt && yAxisOpt.axisLabel && yAxisOpt.axisLabel.color) || '#666';
-    ctx.fillStyle = yAxisLabelColor;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    
     // 计算Y轴刻度值
     const yAxisTicks = this.calculateYAxisTicks(minY, maxY, 5);
     
     // 保存调整后的Y轴范围，供其他地方使用
     this.adjustedYMin = yAxisTicks.min;
     this.adjustedYMax = yAxisTicks.max;
-    
-    // 绘制Y轴标签 (使用调整后的Y轴范围)
-    for (let i = 0; i <= yAxisTicks.tickCount; i++) {
-      const value = yAxisTicks.min + i * yAxisTicks.step;
-      const ratio = (value - yAxisTicks.min) / (yAxisTicks.max - yAxisTicks.min);
-      const y = (grid.top || 0) + chartHeight - ratio * chartHeight;
-      ctx.fillText(Math.round(value).toString(), (grid.left || 0) - 10, y);
+    const showYAxisLabel = yAxisOpt.axisLabel && yAxisOpt.axisLabel.show;
+    if (showYAxisLabel !== undefined ? showYAxisLabel : false) {
+        const yAxisLabelColor = (yAxisOpt && yAxisOpt.axisLabel && yAxisOpt.axisLabel.color) || '#666';
+        ctx.fillStyle = yAxisLabelColor;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        
+        // 绘制Y轴标签 (使用调整后的Y轴范围)
+        for (let i = 0; i <= yAxisTicks.tickCount; i++) {
+            const value = yAxisTicks.min + i * yAxisTicks.step;
+            const ratio = (value - yAxisTicks.min) / (yAxisTicks.max - yAxisTicks.min);
+            const y = (grid.top || 0) + chartHeight - ratio * chartHeight;
+            ctx.fillText(Math.round(value).toString(), (grid.left || 0) - 10, y);
+        }
     }
   }
 

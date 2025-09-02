@@ -7,7 +7,7 @@
                 ref="straightChart"
                 :option="straightOption" 
                 width="700rpx"
-                height="180px"
+                height="200px"
                 @click="onChartClick"
             />
           </view>
@@ -19,7 +19,7 @@
                 ref="smoothOption"
                 :option="smoothOption" 
                 width="700rpx"
-                height="180px"
+                height="200px"
                 @click="onChartClick"
             />
           </view>
@@ -57,7 +57,10 @@ export default {
           data: ['一月', '二月', '三月', '四月', '五月', '六月']
         },
         yAxis: {
-          type: 'value'
+          type: 'value',
+          axisLabel: {
+            show: false
+          }
         },
         series: [
           {
@@ -90,7 +93,10 @@ export default {
           data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
         },
         yAxis: {
-          type: 'value'
+          type: 'value',
+           axisLabel: {
+            show: true
+          }
         },
         series: [
           {
@@ -125,7 +131,10 @@ export default {
           data: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月']
         },
         yAxis: {
-          type: 'value'
+          type: 'value',
+           axisLabel: {
+            show: false
+          }
         },
         series: [
           {
