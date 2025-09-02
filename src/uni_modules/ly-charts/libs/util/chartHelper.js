@@ -242,30 +242,33 @@ class ChartHelper {
     }
     
     // 绘制X轴标签
-    const xAxisLabelColor = (xAxisOpt && xAxisOpt.axisLabel && xAxisOpt.axisLabel.color) || '#666';
-    const xAxisFontSize = (xAxisOpt && xAxisOpt.axisLabel && xAxisOpt.axisLabel.fontSize) || 12;
-    ctx.fillStyle = xAxisLabelColor;
-    ctx.font = `${xAxisFontSize}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    
-    if (xAxisData && Array.isArray(xAxisData) && xAxisData.length > 0) {
-      // 对于柱状图，需要调整X轴标签位置，避免顶边
-      if (chartType === 'bar') {
-        this.drawBarXAxisLabels(ctx, xAxisData, grid, chartWidth, canvasHeight, xAxisFontSize, xAxisPadding);
-      } else {
-        // 折线图保持原来的标签绘制方式
-        // 对于少量标签，全部显示
-        if (xAxisData.length <= 5) {
-          xAxisData.forEach((label, i) => {
-            const x = (grid.left || 0) + xAxisPadding + (i / Math.max(xAxisData.length - 1, 1)) * (chartWidth - 2 * xAxisPadding);
-            ctx.fillText(String(label), x, canvasHeight - (grid.bottom || 0) + 10);
-          });
+    const showXAxisLabel = xAxisOpt.axisLabel && xAxisOpt.axisLabel.show;
+    if (showXAxisLabel !== undefined ? showXAxisLabel : true) {
+        const xAxisLabelColor = (xAxisOpt && xAxisOpt.axisLabel && xAxisOpt.axisLabel.color) || '#666';
+        const xAxisFontSize = (xAxisOpt && xAxisOpt.axisLabel && xAxisOpt.axisLabel.fontSize) || 12;
+        ctx.fillStyle = xAxisLabelColor;
+        ctx.font = `${xAxisFontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        
+        if (xAxisData && Array.isArray(xAxisData) && xAxisData.length > 0) {
+        // 对于柱状图，需要调整X轴标签位置，避免顶边
+        if (chartType === 'bar') {
+            this.drawBarXAxisLabels(ctx, xAxisData, grid, chartWidth, canvasHeight, xAxisFontSize, xAxisPadding);
         } else {
-          // 对于较多标签，采用优化的显示策略
-          this.drawXAxisLabels(ctx, xAxisData, grid, chartWidth, canvasHeight, xAxisFontSize, xAxisPadding);
+            // 折线图保持原来的标签绘制方式
+            // 对于少量标签，全部显示
+            if (xAxisData.length <= 5) {
+            xAxisData.forEach((label, i) => {
+                const x = (grid.left || 0) + xAxisPadding + (i / Math.max(xAxisData.length - 1, 1)) * (chartWidth - 2 * xAxisPadding);
+                ctx.fillText(String(label), x, canvasHeight - (grid.bottom || 0) + 10);
+            });
+            } else {
+            // 对于较多标签，采用优化的显示策略
+            this.drawXAxisLabels(ctx, xAxisData, grid, chartWidth, canvasHeight, xAxisFontSize, xAxisPadding);
+            }
         }
-      }
+        }
     }
     
     // 绘制Y轴标签
