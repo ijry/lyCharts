@@ -1,3 +1,6 @@
+## 26.0.10（2025-09-04）
+feat: 折线图与柱状图新增支持配置xAxis.axisLabel.show控制是否显示X轴标签
+
 ## 26.0.9（2025-09-02）
 feat: 折线图新增支持配置yAxis.axisLabel.show控制是否显示Y轴刻度标签
 
