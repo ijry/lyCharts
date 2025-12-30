@@ -204,13 +204,13 @@ export default {
             // 确保不会除以零，并应用X轴padding
             const x = this.grid.left + xAxisPadding + (xAxisData.length > 1 ? (i / (xAxisData.length - 1)) * paddedChartWidth : 0);
             // 使用调整后的Y轴范围计算Y坐标
-            const y = this.grid.top + chartHeight - ((actualValue - actualMinY) / (actualMaxY - actualMinY || 1)) * chartHeight;
+            const y = this.grid.top + chartHeight - ((actualValue - actualMinY) / (actualMaxY - actualMinY ?? 1)) * chartHeight;
             points.push({ 
               x, 
               y, 
               value: actualValue, 
-              name: xAxisData[i] || i,
-              seriesName: serie.name || `Series ${index}`
+              name: xAxisData[i] ?? i,
+              seriesName: serie.name ?? `Series ${index}`
             });
           });
         }
