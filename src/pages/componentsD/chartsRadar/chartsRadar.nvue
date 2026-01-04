@@ -189,6 +189,12 @@ export default {
           areaStyle: {
             color: 'rgba(84, 112, 198, 0.3)'
           },
+		  label: {
+			  show: true, // 显示标签
+			  color: 'red',
+			  fontSize: 11,
+			  position: 'top' // 标签位置，可以是'top'、'bottom'等。
+		  },
           data: [90, 80, 95, 70, 85]
         }]
       }

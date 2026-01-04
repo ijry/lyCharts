@@ -664,6 +664,67 @@ export default {
           ctx.fill();
           ctx.stroke();
         }
+        
+        // 绘制标签 - 根据series.label配置决定是否显示
+        if (seriesItem.label && seriesItem.label.show) {
+          const labelFontSize = seriesItem.label.fontSize || 12;
+          const labelColor = seriesItem.label.color || '#666666';
+          const labelPosition = seriesItem.label.position || 'top';
+          
+          ctx.setFontSize(labelFontSize);
+          ctx.setFillStyle(labelColor);
+          ctx.setTextAlign('center');
+          
+          for (let i = 0; i < points.length; i++) {
+            const indicator = indicators[i];
+            const maxValue = indicator.max || 100;
+            const value = Array.isArray(values[i]) ? values[i][0] : values[i]; // 兼容多维数组
+            const ratio = Math.min((value || 0) / maxValue, 1); // 限制最大值
+            // 使用 radius 配置计算实际半径
+            const radius = innerRadius + ratio * (outerRadius - innerRadius);
+            const angle = (i * 2 * Math.PI / numIndicators) - Math.PI / 2;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            
+            // 根据标签位置调整标签的绘制位置
+            let labelX = x;
+            let labelY = y;
+            let textAlign = 'center';
+            let textBaseline = 'middle';
+            
+            switch(labelPosition) {
+              case 'top':
+                labelY = y - 5;
+                textBaseline = 'bottom';
+                break;
+              case 'bottom':
+                labelY = y + 8;
+                textBaseline = 'top';
+                break;
+              case 'inside':
+                labelY = y - 5;
+                textBaseline = 'bottom';
+                break;
+              case 'insideTop':
+                labelY = y - 5;
+                textBaseline = 'bottom';
+                break;
+              case 'insideBottom':
+                labelY = y + 5;
+                textBaseline = 'top';
+                break;
+              default:
+                labelY = y - 10;
+                textBaseline = 'bottom';
+            }
+            
+            ctx.setTextAlign(textAlign);
+            ctx.setTextBaseline(textBaseline);
+            
+            // 绘制标签值
+            ctx.fillText(value.toString(), labelX, labelY);
+          }
+        }
       }
     },
     
