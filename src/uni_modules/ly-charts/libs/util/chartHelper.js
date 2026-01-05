@@ -310,12 +310,51 @@ class ChartHelper {
     
     if (labelCount <= 0) return;
     
+    // 计算平均每个标签可用的宽度，并根据字体大小估算能容纳的字符数
+    const availableWidth = chartWidth - 2 * xAxisPadding;
+    const avgLabelWidth = availableWidth / labelCount;
+    // 每个字符大约占用 fontSize * 0.6 的宽度
+    const maxLabelLength = Math.floor(avgLabelWidth / (fontSize * 0.6));
+    
+    // 检查是否有长标签需要旋转
+    let hasLongLabel = false;
+    xAxisData.forEach(label => {
+      if (String(label).length > maxLabelLength && maxLabelLength > 0) {
+        hasLongLabel = true;
+      }
+    });
+    
+    // 如果有长标签，设置旋转
+    if (hasLongLabel) {
+      ctx.save(); // 保存当前上下文状态
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+    } else {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+    }
+    
     // 对于柱状图，需要在每个柱子的中心位置显示标签
     xAxisData.forEach((label, i) => {
       // 计算标签位置，使其居中显示在柱子下方，并确保不超出边界
       const x = (grid.left || 0) + xAxisPadding + ((i + 0.5) / labelCount) * (chartWidth - 2 * xAxisPadding);
-      ctx.fillText(String(label), x, canvasHeight - (grid.bottom || 0) + 10);
+      
+      if (hasLongLabel) {
+        // 旋转45度显示长标签
+        ctx.save();
+        ctx.translate(x, canvasHeight - (grid.bottom || 0) + 30); // 增加偏移量从15到30，提供更多空间
+        ctx.rotate(-45 * Math.PI / 180); // 转换为弧度
+        ctx.fillText(String(label), 0, 0);
+        ctx.restore();
+      } else {
+        ctx.fillText(String(label), x, canvasHeight - (grid.bottom || 0) + 10);
+      }
     });
+    
+    // 如果有长标签，恢复上下文状态
+    if (hasLongLabel) {
+      ctx.restore();
+    }
   }
 
   /**
@@ -344,7 +383,7 @@ class ChartHelper {
     const estimatedLabelWidth = Math.ceil(avgLabelLength * fontSize * 0.6 + 10);
     
     // 计算最多可以显示多少个标签
-    const maxLabels = Math.max(Math.min(labelCount, Math.floor((chartWidth - 2 * xAxisPadding) / estimatedLabelWidth)), 2);
+    let maxLabels = Math.max(Math.min(labelCount, Math.floor((chartWidth - 2 * xAxisPadding) / estimatedLabelWidth)), 2);
     
     // 确定需要显示的标签索引
     const indicesToShow = [];
@@ -355,6 +394,31 @@ class ChartHelper {
       if (labelCount > 1) {
         indicesToShow.push(labelCount - 1);
       }
+    }
+
+    // 计算平均每个标签可用的宽度，并根据字体大小估算能容纳的字符数
+    const availableWidth = chartWidth - 2 * xAxisPadding;
+    const avgLabelWidth = availableWidth / labelCount;
+    // 每个字符大约占用 fontSize * 0.6 的宽度
+    const maxLabelLength = Math.floor(avgLabelWidth / (fontSize * 0.7));
+    
+    // 检查是否有长标签需要旋转
+    let hasLongLabel = false;
+    xAxisData.forEach(label => {
+      if (String(label).length > maxLabelLength && maxLabelLength > 0) {
+        hasLongLabel = true;
+        maxLabels = labelCount;
+      }
+    });
+    
+    // 如果有长标签，设置旋转
+    if (hasLongLabel) {
+      ctx.save(); // 保存当前上下文状态
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+    } else {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
     }
     
     // 如果可以显示更多标签
@@ -383,9 +447,24 @@ class ChartHelper {
       if (index >= 0 && index < labelCount) {
         const x = (grid.left || 0) + xAxisPadding + (index / Math.max(labelCount - 1, 1)) * (chartWidth - 2 * xAxisPadding);
         const label = xAxisData[index] !== undefined ? xAxisData[index] : index;
-        ctx.fillText(String(label), x, canvasHeight - (grid.bottom || 0) + 10);
+        
+        if (hasLongLabel) {
+          // 旋转45度显示长标签
+          ctx.save();
+          ctx.translate(x + 20, canvasHeight - (grid.bottom || 0) + 10); // 增加偏移量从10到30，提供更多空间
+          ctx.rotate(-45 * Math.PI / 180); // 转换为弧度
+          ctx.fillText(String(label), 0, 0);
+          ctx.restore();
+        } else {
+          ctx.fillText(String(label), x, canvasHeight - (grid.bottom || 0) + 10);
+        }
       }
     });
+    
+    // 如果有长标签，恢复上下文状态
+    if (hasLongLabel) {
+      ctx.restore();
+    }
   }
 
   /**

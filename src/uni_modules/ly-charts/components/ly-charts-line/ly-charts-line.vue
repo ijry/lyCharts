@@ -152,6 +152,31 @@ export default {
           );
         }
         
+        // 检查X轴标签是否需要旋转，如果需要则增加底部边距
+        let needRotateLabels = false;
+        if (xAxisData && xAxisData.length > 0) {
+          const xAxisLabelColor = (xAxis && xAxis.axisLabel && xAxis.axisLabel.color) || '#666';
+          const xAxisFontSize = (xAxis && xAxis.axisLabel && xAxis.axisLabel.fontSize) || 12;
+          
+          // 估算标签长度和可用宽度
+          const chartWidth = this.canvasWidth - (this.grid.left || 0) - (this.grid.right || 0);
+          const avgLabelWidth = chartWidth / xAxisData.length;
+          const maxLabelLength = Math.floor(avgLabelWidth / (xAxisFontSize * 0.6));
+          
+          // 检查是否存在需要旋转的长标签
+          for (const label of xAxisData) {
+            if (String(label).length > maxLabelLength && maxLabelLength > 0) {
+              needRotateLabels = true;
+              break;
+            }
+          }
+        }
+        
+        // 如果需要旋转标签，增加底部边距
+        if (needRotateLabels) {
+          this.grid.bottom = Math.max(this.grid.bottom, 60); // 增加底部边距以适应旋转标签
+        }
+        
         // 绘制网格
         const drawVerticalLines = false
         if (option.grid !== false) {
