@@ -1,5 +1,5 @@
 <template>
-  <view class="up-charts-bar" :style="{ width: containerWidth, height: containerHeight }">
+  <view class="ly-charts-bar" :style="{ width: containerWidth, height: containerHeight }">
     <canvas 
       class="chart-canvas" 
       :id="canvasId" 
@@ -15,7 +15,7 @@
 import chartHelper from '../../libs/util/chartHelper.js';
 
 export default {
-  name: 'up-charts-bar',
+  name: 'ly-charts-bar',
   props: {
     // ECharts 风格的配置项
     option: {
@@ -1012,7 +1012,7 @@ export default {
 </script>
 
 <style scoped>
-.up-charts-bar {
+.ly-charts-bar {
   position: relative;
 }
 
