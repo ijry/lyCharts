@@ -1,6 +1,6 @@
-<!-- components/u-charts-line/u-charts-line.vue -->
+<!-- components/ly-charts-line/ly-charts-line.vue -->
 <template>
-  <view class="u-charts-line" :style="{ width: containerWidth, height: containerHeight }">
+  <view class="ly-charts-line" :style="{ width: containerWidth, height: containerHeight }">
     <canvas 
       class="chart-canvas" 
       :id="canvasId" 
@@ -16,7 +16,7 @@
 import chartHelper from '../../libs/util/chartHelper.js';
 
 export default {
-  name: 'u-charts-line',
+  name: 'ly-charts-line',
   props: {
     // ECharts 风格的配置项
     option: {
@@ -569,7 +569,7 @@ export default {
 </script>
 
 <style scoped>
-.u-charts-line {
+.ly-charts-line {
   position: relative;
 }
 
