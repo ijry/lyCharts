@@ -1,5 +1,5 @@
 <template>
-  <view class="u-charts-pie" :style="{width: width}">
+  <view class="ly-charts-pie" :style="{width: width}">
     <!-- 标题 -->
     <view 
       v-if="option.title && option.title.show !== false" 
@@ -36,7 +36,7 @@ const dom = weex.requireModule('dom');
 // #endif
 
 export default {
-  name: 'u-charts-pie',
+  name: 'ly-charts-pie',
   props: {
     // 图表数据
     option: {
@@ -56,7 +56,7 @@ export default {
   },
   data() {
     return {
-      cid: 'u-charts-pie-' + Math.random().toString(36).substr(2),
+      cid: 'ly-charts-pie-' + Math.random().toString(36).substr(2),
       // 修改:初始化时根据width类型处理默认值，支持rpx单位
       canvasWidth: typeof this.width === 'string' && this.width.indexOf('%') !== -1 ? 
         null : 
@@ -682,7 +682,7 @@ export default {
 </script>
 
 <style scoped>
-.u-charts-pie {
+.ly-charts-pie {
   position: relative;
   width: 100%;
 }
