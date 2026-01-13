@@ -1,5 +1,5 @@
 <template>
-	<view class="up-charts-gauge">
+	<view class="ly-charts-gauge">
 		<canvas 
 			:id="canvasId" 
 			:canvas-id="canvasId" 
@@ -12,7 +12,7 @@
 <script>
 import chartHelper from '../../libs/util/chartHelper.js';
 	export default {
-		name: "up-charts-gauge",
+		name: "ly-charts-gauge",
 		props: {
 			// 图表宽度
 			width: {
