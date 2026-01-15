@@ -1,5 +1,5 @@
 <template>
-  <view class="u-charts-scatter" :style="{ width: containerWidth, height: containerHeight }">
+  <view class="ly-charts-scatter" :style="{ width: containerWidth, height: containerHeight }">
     <canvas 
       class="chart-canvas" 
       :id="canvasId" 
@@ -15,7 +15,7 @@
 import chartHelper from '../../libs/util/chartHelper.js';
 
 export default {
-  name: 'u-charts-scatter',
+  name: 'ly-charts-scatter',
   props: {
     // ECharts 风格的配置项
     option: {

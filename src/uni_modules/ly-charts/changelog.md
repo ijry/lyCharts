@@ -1,3 +1,6 @@
+## 26.0.21（2026-01-15）
+improvment: scatter组件前缀统一
+
 ## 26.0.20（2026-01-15）
 improvment: radar组件前缀统一
 
