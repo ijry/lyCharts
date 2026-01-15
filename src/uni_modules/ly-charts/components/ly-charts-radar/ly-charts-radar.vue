@@ -1,5 +1,5 @@
 <template>
-  <view class="u-charts-radar">
+  <view class="ly-charts-radar">
     <canvas 
       :id="cid" 
       :canvas-id="cid" 
@@ -20,7 +20,7 @@ const dom = weex.requireModule('dom');
 import chartHelper from '../../libs/util/chartHelper.js';
 
 export default {
-  name: 'u-charts-radar',
+  name: 'ly-charts-radar',
   props: {
     // ECharts标准配置接口
     option: {
@@ -862,7 +862,7 @@ export default {
 </script>
 
 <style scoped>
-.u-charts-radar {
+.ly-charts-radar {
   position: relative;
   width: 100%;
 }
