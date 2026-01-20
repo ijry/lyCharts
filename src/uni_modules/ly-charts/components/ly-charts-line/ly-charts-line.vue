@@ -14,8 +14,9 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
-import { nextTick } from 'vue';
+import { nextTick, getCurrentInstance } from 'vue';
 import chartHelper from '../../libs/util/chartHelper.js';
+const instance = getCurrentInstance()
 
 // 定义props
 const props = defineProps({
@@ -61,14 +62,14 @@ const containerWidth = computed(() => {
 // 方法定义
 const initCanvas = () => {
   try {
-    const query = uni.createSelectorQuery().in(this);
+    const query = uni.createSelectorQuery().in(instance);
     query.select('#' + canvasId.value).boundingClientRect((res) => {
       if (res) {
         canvasWidth.value = res.width;
         canvasHeight.value = res.height;
         
         // 创建canvas上下文
-        ctx.value = uni.createCanvasContext(canvasId.value, this);
+        ctx.value = uni.createCanvasContext(canvasId.value, instance);
         if (!ctx.value) {
           console.error('无法获取canvas绘图上下文');
           return;
