@@ -66,6 +66,12 @@
                     "style" : {
                         "navigationBarTitleText" : "仪表盘"
                     }
+                },
+                {
+                    "path" : "chartsCandlestick/chartsCandlestick",
+                    "style" : {
+                        "navigationBarTitleText" : "K线图"
+                    }
                 }
             ]
         }

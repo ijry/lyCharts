@@ -27,7 +27,7 @@
 		data() {
 			return {
 				list: list,
-				desc: '零云®lyCharts是全面兼容nvue/鸿蒙/uni-app-x(即将发布)的uni-app生态新一代图表组件，API兼容ECharts，但体积更小，减少学习开发成本，提升开发效率。',
+				desc: '零云®lyCharts是全面兼容 nvue / 鸿蒙 / uni-app x（uvue）的 uni-app 生态新一代图表组件，API兼容ECharts，但体积更小，减少学习开发成本，提升开发效率。',
 			}
 		},
 		computed: {

@@ -8,6 +8,8 @@
 
 零云®lyCharts，是[uni-app](https://uniapp.dcloud.io/)生态优秀的图表库，全面的组件和便捷的接口会让您信手拈来，如鱼得水。
 
+当前版本已补充 uni-app x / uvue 组件实现，组件目录中采用 `.vue + .uvue` 共存方式，保留原有 uni-app 兼容性的同时，为 uvue 提供独立 canvas 兼容层，并新增了兼容 ECharts 风格配置的 K 线图组件。
+
 ## [官方文档：https://ly-charts.netlify.app/](https://ly-charts.netlify.app/)
 
 ## 链接

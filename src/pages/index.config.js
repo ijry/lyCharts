@@ -42,6 +42,12 @@ export default [{
         icon: 'chartsGauge',
         title: 'ChartsGauge 仪表盘',
         title_en: 'ChartsRGauge'
+    },
+    {
+        path: '/pages/componentsD/chartsCandlestick/chartsCandlestick',
+        icon: 'chartsLine',
+        title: 'ChartsCandlestick K线图',
+        title_en: 'ChartsCandlestick'
     }]
 }
 ]
