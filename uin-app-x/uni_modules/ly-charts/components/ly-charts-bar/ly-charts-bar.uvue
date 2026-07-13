@@ -1,0 +1,495 @@
+<template>
+  <view class="ly-charts-bar" :style="{ width: containerWidth, height: containerHeight }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyBarCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  clearRect(x : number, y : number, width : number, height : number) : void
+  setFillStyle(color : string) : void
+  fillRect(x : number, y : number, width : number, height : number) : void
+  setStrokeStyle(color : string) : void
+  setLineWidth(width : number) : void
+  beginPath() : void
+  closePath() : void
+  moveTo(x : number, y : number) : void
+  lineTo(x : number, y : number) : void
+  fill() : void
+  stroke() : void
+  setFontSize(size : number) : void
+  setFont(font : string) : void
+  setTextAlign(align : string) : void
+  setTextBaseline(baseline : string) : void
+  fillText(text : string, x : number, y : number) : void
+  save() : void
+  translate(x : number, y : number) : void
+  rotate(angle : number) : void
+  restore() : void
+  measureText(text : string) : TextMetrics | null
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-bar',
+  props: {
+    option: {
+      type: Object,
+      default: () => ({})
+    },
+    height: {
+      type: [String, Number],
+      default: 400
+    },
+    width: {
+      type: [String, Number],
+      default: '100%'
+    }
+  },
+  data() {
+    return {
+      canvasId: `bar-chart-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      grid: { top: 10, right: 20, bottom: 25, left: 50 },
+      seriesData: [] as any[],
+      touchInfo: {
+        startX: 0,
+        startY: 0
+      }
+    }
+  },
+  computed: {
+    containerHeight() {
+      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    },
+    containerWidth() {
+      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    }
+  },
+  watch: {
+    option: {
+      handler(newOption : any) {
+        this.drawChart(newOption)
+      },
+      deep: true
+    }
+  },
+  methods: {
+    initCanvas() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.drawChart(this.option)
+    },
+    calculateStackedDataRange(series : any[]) {
+      if (series == null || series.length === 0) {
+        return { minY: 0, maxY: 1 }
+      }
+      const firstSeries = series[0] != null ? series[0] as UTSJSONObject : null
+      const firstData = firstSeries != null ? firstSeries.get('data') : null
+      const categoryCount = Array.isArray(firstData) ? firstData.length : 0
+      let minY = 0
+      let maxY = 0
+
+      for (let i = 0; i < categoryCount; i++) {
+        let positiveTotal = 0
+        let negativeTotal = 0
+        series.forEach((serie : any) => {
+          const serieObject = serie as UTSJSONObject
+          const serieType = serieObject.get('type')
+          const serieDataValue = serieObject.get('data')
+          const serieData = Array.isArray(serieDataValue) ? serieDataValue : [] as any[]
+          if (serieType !== 'bar' || serieData.length === 0) {
+            return
+          }
+          const itemValue = serieData[i]
+          const rawValue = typeof itemValue === 'object' && itemValue !== null ? (itemValue as UTSJSONObject).get('value') : itemValue
+          if (typeof rawValue !== 'number' || isNaN(rawValue)) {
+            return
+          }
+          const value = rawValue as number
+          const stackValue = serieObject.get('stack')
+          if (stackValue != null && `${stackValue}` !== '') {
+            if (value >= 0) {
+              positiveTotal += value
+            } else {
+              negativeTotal += value
+            }
+          } else {
+            positiveTotal = Math.max(positiveTotal, value)
+            negativeTotal = Math.min(negativeTotal, value)
+          }
+        })
+        maxY = Math.max(maxY, positiveTotal)
+        minY = Math.min(minY, negativeTotal)
+      }
+
+      if (maxY === minY) {
+        maxY += 1
+      }
+      const range = maxY - minY
+      const padding = range === 0 ? 1 : range * 0.1
+      return {
+        minY: minY - padding,
+        maxY: maxY + padding
+      }
+    },
+    drawChart(option : any) {
+      if (this.ctx == null || option == null) {
+        return
+      }
+
+      try {
+        const ctx = this.ctx
+        if (ctx == null) {
+          return
+        }
+        this.grid = { top: 10, right: 20, bottom: 25, left: 50 }
+        const optionObject = option as UTSJSONObject
+        const backgroundColor = optionObject.get('backgroundColor')
+        ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        if (backgroundColor != null && `${backgroundColor}` !== '') {
+          ctx.$callMethod('setFillStyle', `${backgroundColor}`)
+          ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        }
+
+        let titleHeight = 0
+        const titleOption = optionObject.get('title')
+        const titleObject = titleOption as UTSJSONObject | null
+        const titleText = titleObject != null ? titleObject.get('text') : null
+        if (titleOption != null && titleText != null && `${titleText}` !== '') {
+          titleHeight = 0
+        }
+        if (titleHeight > 0) {
+          const gridObject = this.grid as UTSJSONObject
+          const currentTop = gridObject.get('top')
+          gridObject.set('top', Math.max(typeof currentTop === 'number' ? currentTop : 10, titleHeight + 10))
+        }
+
+        const seriesValue = optionObject.get('series')
+        const xAxisValue = optionObject.get('xAxis')
+        const yAxisValue = optionObject.get('yAxis')
+        const xAxis = xAxisValue != null ? xAxisValue : {}
+        const yAxis = yAxisValue != null ? yAxisValue : {}
+        const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+        const xAxisData = chartHelper.processXAxisData(xAxis, series)
+        const range = this.calculateStackedDataRange(series)
+        const rangeObject = range as UTSJSONObject
+        const minYValue = rangeObject.get('minY')
+        const maxYValue = rangeObject.get('maxY')
+        const minY = typeof minYValue === 'number' ? minYValue : 0
+        const maxY = typeof maxYValue === 'number' ? maxYValue : 1
+        const xAxisPaddingValue = optionObject.get('xAxisPadding')
+        const xAxisPadding = typeof xAxisPaddingValue === 'number' ? xAxisPaddingValue : 10
+
+        const legendOption = optionObject.get('legend') as UTSJSONObject | null
+        const legendData = legendOption != null ? legendOption.get('data') : null
+        if (legendOption != null && legendData != null) {
+          const legendColors = series.map((serie : any, index : number) => {
+            const serieObject = serie as UTSJSONObject
+            const serieColor = serieObject.get('color')
+            const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+            const itemColor = itemStyle != null ? itemStyle.get('color') : null
+            if (serieColor != null && `${serieColor}` !== '') {
+              return serieColor
+            }
+            if (itemColor != null && `${itemColor}` !== '') {
+              return itemColor
+            }
+            return chartHelper.getColor(index)
+          })
+          legendColors.length
+        }
+
+        if (optionObject.get('grid') !== false) {
+          chartHelper.drawGrid(ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData.length, minY, maxY, false, xAxisPadding)
+        }
+        chartHelper.drawAxis(ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData, minY, maxY, xAxis, yAxis, 'bar', xAxisPadding)
+        this.drawBars(series, xAxisData, minY, maxY, chartHelper.adjustedYMin, chartHelper.adjustedYMax, xAxisPadding)
+        ctx.$callMethod('draw')
+      } catch (error) {
+        console.error('绘制柱状图失败:', error)
+      }
+    },
+    drawBars(series : any[], xAxisData : any[], minY : number, maxY : number, adjustedYMin : number, adjustedYMax : number, xAxisPadding : number = 0) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      const gridObject = this.grid as UTSJSONObject
+      const gridLeftValue = gridObject.get('left')
+      const gridRightValue = gridObject.get('right')
+      const gridTopValue = gridObject.get('top')
+      const gridBottomValue = gridObject.get('bottom')
+      const gridLeft = typeof gridLeftValue === 'number' ? gridLeftValue : 50
+      const gridRight = typeof gridRightValue === 'number' ? gridRightValue : 20
+      const gridTop = typeof gridTopValue === 'number' ? gridTopValue : 10
+      const gridBottom = typeof gridBottomValue === 'number' ? gridBottomValue : 25
+      const chartWidth = this.canvasWidth - gridLeft - gridRight
+      const chartHeight = this.canvasHeight - gridTop - gridBottom
+      const categoryCount = Math.max(xAxisData.length, 1)
+      const barSeries = series.filter((serie : any) => (serie as UTSJSONObject).get('type') === 'bar')
+      const useAdjustedY = adjustedYMin != null && adjustedYMax != null
+      const actualMinY = useAdjustedY ? adjustedYMin : minY
+      const actualMaxY = useAdjustedY ? adjustedYMax : maxY
+      const yRange = actualMaxY - actualMinY
+      const safeYRange = yRange != 0 ? yRange : 1
+      const baselineY = gridTop + chartHeight - ((0 - actualMinY) / safeYRange) * chartHeight
+      const categoryWidth = (chartWidth - 2 * xAxisPadding) / categoryCount
+      this.seriesData = []
+      const groupCount = Math.max(barSeries.length, 1)
+      const groupWidth = categoryWidth * 0.72
+      const barGap = groupCount > 0 ? groupWidth / Math.max(groupCount, 1) : groupWidth
+      const barWidth = Math.max(8, barGap * 0.72)
+
+      barSeries.forEach((serie : any, seriesIndex : number) => {
+        const serieObject = serie as UTSJSONObject
+        const groupIndex = seriesIndex
+        let color = chartHelper.getColor(seriesIndex)
+        const serieColor = serieObject.get('color')
+        const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+        const itemColor = itemStyle != null ? itemStyle.get('color') : null
+        if (serieColor != null && `${serieColor}` !== '') {
+          color = `${serieColor}`
+        } else if (itemColor != null && `${itemColor}` !== '') {
+          color = `${itemColor}`
+        }
+        const label = serieObject.get('label') as UTSJSONObject | null
+        const showLabel = label != null && label.get('show') === true
+        const labelColorValue = label != null ? label.get('color') : null
+        const labelPositionValue = label != null ? label.get('position') : null
+        const labelColor = labelColorValue != null && `${labelColorValue}` !== '' ? `${labelColorValue}` : '#666'
+        const labelPosition = labelPositionValue != null && `${labelPositionValue}` !== '' ? `${labelPositionValue}` : 'top'
+        const points = [] as any[]
+
+        for (let i = 0; i < categoryCount; i++) {
+          const dataValue = serieObject.get('data')
+          const dataList = Array.isArray(dataValue) ? dataValue : [] as any[]
+          const rawValue = dataList.length > i ? dataList[i] : 0
+          const value = typeof rawValue === 'object' && rawValue !== null ? (rawValue as UTSJSONObject).get('value') : rawValue
+          const safeValue = typeof value === 'number' && !isNaN(value) ? value : 0
+          const groupCenter = gridLeft + xAxisPadding + i * categoryWidth + categoryWidth / 2
+          const x = groupCenter - groupWidth / 2 + groupIndex * barGap + (barGap - barWidth) / 2
+
+          const startValue = 0
+          const endValue = startValue + safeValue
+
+          const startY = gridTop + chartHeight - ((startValue - actualMinY) / safeYRange) * chartHeight
+          const endY = gridTop + chartHeight - ((endValue - actualMinY) / safeYRange) * chartHeight
+          const topY = Math.min(startY, endY)
+          const height = Math.abs(endY - startY)
+
+          ctx.$callMethod('beginPath')
+          ctx.$callMethod('setFillStyle', color)
+          const barType = serieObject.get('barType')
+          if (barType === 'mountain') {
+            ctx.$callMethod('moveTo', x + barWidth / 2, topY)
+            ctx.$callMethod('lineTo', x, topY + height)
+            ctx.$callMethod('lineTo', x + barWidth, topY + height)
+            ctx.$callMethod('closePath')
+            ctx.$callMethod('fill')
+          } else {
+            ctx.$callMethod('fillRect', x, topY, barWidth, Math.max(height, 1))
+          }
+
+          const point = {
+            x,
+            y: topY,
+            width: barWidth,
+            height: Math.max(height, 1),
+            value: safeValue,
+            name: xAxisData[i] != null ? xAxisData[i] : i,
+            seriesName: serieObject.get('name') != null && `${serieObject.get('name')}` !== '' ? serieObject.get('name') : `Series ${seriesIndex}`,
+            color
+          }
+          points.push(point)
+
+          if (showLabel) {
+            ctx.$callMethod('setFontSize', 10)
+            ctx.$callMethod('setFillStyle', labelColor)
+            ctx.$callMethod('setTextAlign', 'center')
+            ctx.$callMethod('setTextBaseline', 'bottom')
+            let labelX = x + barWidth / 2
+            let labelY = topY - 4
+            if (labelPosition === 'inside') {
+              ctx.$callMethod('setTextBaseline', 'middle')
+              labelY = topY + Math.max(height, 1) / 2
+            } else if (labelPosition === 'bottom') {
+              ctx.$callMethod('setTextBaseline', 'top')
+              labelY = topY + Math.max(height, 1) + 4
+            }
+            ctx.$callMethod('fillText', `${safeValue}`, labelX, labelY)
+          }
+        }
+
+        this.seriesData.push({
+          name: serieObject.get('name') != null && `${serieObject.get('name')}` !== '' ? serieObject.get('name') : `Series ${seriesIndex}`,
+          points,
+          color
+        })
+      })
+
+      if (actualMinY < 0 && actualMaxY > 0) {
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('setStrokeStyle', '#ccc')
+        ctx.$callMethod('setLineWidth', 1)
+        ctx.$callMethod('moveTo', gridLeft, baselineY)
+        ctx.$callMethod('lineTo', this.canvasWidth - gridRight, baselineY)
+        ctx.$callMethod('stroke')
+      }
+    },
+    handleTouchStart(event : any) {
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      const touch = touches.length > 0 ? touches[0] : null
+      if (touch != null) {
+        const touchObject = touch as UTSJSONObject
+        const touchX = touchObject.get('x')
+        const touchY = touchObject.get('y')
+        const touchInfoObject = this.touchInfo as UTSJSONObject
+        touchInfoObject.set('startX', typeof touchX === 'number' ? touchX : 0)
+        touchInfoObject.set('startY', typeof touchY === 'number' ? touchY : 0)
+      }
+    },
+    handleTouchMove(event : any) {
+    },
+    handleTouchEnd(event : any) {
+      const eventObject = event as UTSJSONObject
+      const changedTouchesValue = eventObject.get('changedTouches')
+      const changedTouches = Array.isArray(changedTouchesValue) ? changedTouchesValue : [] as any[]
+      const touch = changedTouches.length > 0 ? changedTouches[0] : null
+      if (touch == null) {
+        return
+      }
+      const touchObject = touch as UTSJSONObject
+      const touchX = touchObject.get('x')
+      const touchY = touchObject.get('y')
+      const endX = typeof touchX === 'number' ? touchX : 0
+      const endY = typeof touchY === 'number' ? touchY : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const startXValue = touchInfoObject.get('startX')
+      const startYValue = touchInfoObject.get('startY')
+      const startX = typeof startXValue === 'number' ? startXValue : 0
+      const startY = typeof startYValue === 'number' ? startYValue : 0
+      if (Math.abs(endX - startX) < 5 && Math.abs(endY - startY) < 5) {
+        this.handleChartClick(endX, endY)
+      }
+    },
+    handleChartClick(x : number, y : number) {
+      let closestPoint = null as UTSJSONObject | null
+      let closestSeries = null as UTSJSONObject | null
+      let closestX = 0
+      let closestY = 0
+      this.seriesData.forEach((series : any) => {
+        const seriesObject = series as UTSJSONObject
+        const pointsValue = seriesObject.get('points')
+        const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
+        points.forEach((point : any) => {
+          const pointObject = point as UTSJSONObject
+          const pointXValue = pointObject.get('x')
+          const pointYValue = pointObject.get('y')
+          const pointWidthValue = pointObject.get('width')
+          const pointHeightValue = pointObject.get('height')
+          const pointX = typeof pointXValue === 'number' ? pointXValue : 0
+          const pointY = typeof pointYValue === 'number' ? pointYValue : 0
+          const pointWidth = typeof pointWidthValue === 'number' ? pointWidthValue : 0
+          const pointHeight = typeof pointHeightValue === 'number' ? pointHeightValue : 0
+          if (x >= pointX && x <= pointX + pointWidth && y >= pointY && y <= pointY + pointHeight) {
+            closestPoint = pointObject
+            closestSeries = seriesObject
+            closestX = pointX + pointWidth / 2
+            closestY = pointY
+          }
+        })
+      })
+      if (closestPoint != null && closestSeries != null) {
+        const closestPointObject = closestPoint as UTSJSONObject
+        const closestSeriesObject = closestSeries as UTSJSONObject
+        const seriesNameValue = closestSeriesObject.get('name')
+        const nameValue = closestPointObject.get('name')
+        const pointValue = closestPointObject.get('value')
+        const colorValue = closestPointObject.get('color')
+        const seriesName = seriesNameValue != null && `${seriesNameValue}` !== '' ? `${seriesNameValue}` : ''
+        const name = nameValue != null && `${nameValue}` !== '' ? `${nameValue}` : ''
+        const value = typeof pointValue === 'number' ? pointValue : 0
+        const color = colorValue != null && `${colorValue}` !== '' ? `${colorValue}` : ''
+        this.$emit('click', {
+          componentType: 'series',
+          seriesType: 'bar',
+          seriesName,
+          name,
+          value,
+          color,
+          event: {
+            offsetX: closestX,
+            offsetY: closestY
+          }
+        })
+      }
+    },
+    setOption(option : any, notMerge : boolean = false) {
+      if (notMerge) {
+        this.drawChart(option)
+        return
+      }
+      try {
+        this.drawChart(option)
+      } catch (error) {
+        console.error('合并配置失败:', error)
+        this.drawChart(option)
+      }
+    },
+    resize() {
+      this.initCanvas()
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initCanvas()
+    })
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-bar {
+  position: relative;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+</style>

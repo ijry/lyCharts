@@ -1,0 +1,279 @@
+<template>
+  <view class="ly-charts-scatter" :style="{ width: containerWidth, height: containerHeight }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyScatterCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  clearRect(x : number, y : number, width : number, height : number) : void
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-scatter',
+  props: {
+    option: {
+      type: Object,
+      default: () => ({})
+    },
+    height: {
+      type: [String, Number],
+      default: 400
+    },
+    width: {
+      type: [String, Number],
+      default: '100%'
+    }
+  },
+  data() {
+    return {
+      canvasId: `scatter-chart-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      grid: { top: 10, right: 20, bottom: 25, left: 50 },
+      seriesData: [] as any[],
+      touchInfo: {
+        startX: 0,
+        startY: 0
+      }
+    }
+  },
+  computed: {
+    containerHeight() {
+      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    },
+    containerWidth() {
+      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    }
+  },
+  watch: {
+    option: {
+      handler(newOption : any) {
+        this.drawChart(newOption)
+      },
+      deep: true
+    }
+  },
+  methods: {
+    initCanvas() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.drawChart(this.option)
+    },
+    drawChart(option : any) {
+      const ctx = this.ctx
+      if (ctx == null || option == null) {
+        return
+      }
+      try {
+        this.grid = { top: 10, right: 20, bottom: 25, left: 50 }
+        const optionObject = option as UTSJSONObject
+        const backgroundColor = optionObject.get('backgroundColor')
+        ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        if (backgroundColor != null && `${backgroundColor}` !== '') {
+          ctx.$callMethod('setFillStyle', `${backgroundColor}`)
+          ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        }
+        const titleOption = optionObject.get('title')
+        const titleHeight = chartHelper.drawTitle(ctx, titleOption, this.canvasWidth) as number
+        if (titleHeight > 0) {
+          const gridObject = this.grid as UTSJSONObject
+          gridObject.set('top', Math.max(gridObject.get('top') as number, titleHeight + 10))
+        }
+        const seriesValue = optionObject.get('series')
+        const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+        const range = this.calculateScatterDataRange(series) as UTSJSONObject
+        const minX = range.get('minX') as number
+        const maxX = range.get('maxX') as number
+        const minY = range.get('minY') as number
+        const maxY = range.get('maxY') as number
+        const xAxisValue = optionObject.get('xAxis')
+        const yAxisValue = optionObject.get('yAxis')
+        const xAxis = xAxisValue != null ? xAxisValue : {}
+        const yAxis = yAxisValue != null ? yAxisValue : {}
+        if (optionObject.get('grid') !== false) {
+          chartHelper.drawGrid(ctx, this.grid, this.canvasWidth, this.canvasHeight, 5, minY, maxY, true, 0)
+        }
+        chartHelper.drawAxis(ctx, this.grid, this.canvasWidth, this.canvasHeight, [minX, (minX + maxX) / 2, maxX], minY, maxY, xAxis, yAxis, 'scatter', 0)
+        this.drawScatterSeries(series, minX, maxX, minY, maxY)
+        ctx.$callMethod('draw')
+      } catch (error) {
+        console.error('绘制散点图失败:', error)
+      }
+    },
+    calculateScatterDataRange(series : any[]) {
+      let minX = Number.MAX_VALUE
+      let maxX = -Number.MAX_VALUE
+      let minY = Number.MAX_VALUE
+      let maxY = -Number.MAX_VALUE
+      let hasData = false
+      series.forEach((serie : any) => {
+        const serieObject = serie as UTSJSONObject
+        const serieType = serieObject.get('type')
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        if (serieType !== 'scatter') {
+          return
+        }
+        data.forEach((point : any) => {
+          if (!Array.isArray(point) || point.length < 2) {
+            return
+          }
+          const x = point[0]
+          const y = point[1]
+          if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y)) {
+            minX = Math.min(minX, x)
+            maxX = Math.max(maxX, x)
+            minY = Math.min(minY, y)
+            maxY = Math.max(maxY, y)
+            hasData = true
+          }
+        })
+      })
+      if (!hasData) {
+        return { minX: 0, maxX: 1, minY: 0, maxY: 1 }
+      }
+      const xRange = maxX - minX
+      const yRange = maxY - minY
+      const xPadding = xRange === 0 ? 1 : xRange * 0.1
+      const yPadding = yRange === 0 ? 1 : yRange * 0.1
+      return {
+        minX: minX - xPadding,
+        maxX: maxX + xPadding,
+        minY: minY - yPadding,
+        maxY: maxY + yPadding
+      }
+    },
+    drawScatterSeries(series : any[], minX : number, maxX : number, minY : number, maxY : number) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      const gridObject = this.grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridRight = gridObject.get('right') as number
+      const gridTop = gridObject.get('top') as number
+      const gridBottom = gridObject.get('bottom') as number
+      const chartWidth = this.canvasWidth - gridLeft - gridRight
+      const chartHeight = this.canvasHeight - gridTop - gridBottom
+      const safeXRange = maxX - minX != 0 ? maxX - minX : 1
+      const safeYRange = maxY - minY != 0 ? maxY - minY : 1
+      this.seriesData = []
+      series.forEach((serie : any, index : number) => {
+        const serieObject = serie as UTSJSONObject
+        if (serieObject.get('type') !== 'scatter') {
+          return
+        }
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+        const itemColor = itemStyle != null ? itemStyle.get('color') : null
+        const serieColor = serieObject.get('color')
+        const color = serieColor != null && `${serieColor}` !== '' ? `${serieColor}` : (itemColor != null && `${itemColor}` !== '' ? `${itemColor}` : chartHelper.getColor(index))
+        const symbolSizeValue = serieObject.get('symbolSize')
+        const symbolSize = typeof symbolSizeValue === 'number' ? symbolSizeValue : 10
+        const points = [] as any[]
+        ctx.$callMethod('setFillStyle', color)
+        data.forEach((value : any, i : number) => {
+          if (!Array.isArray(value) || value.length < 2) {
+            return
+          }
+          const xValue = value[0]
+          const yValue = value[1]
+          if (typeof xValue !== 'number' || typeof yValue !== 'number') {
+            return
+          }
+          const x = gridLeft + ((xValue - minX) / safeXRange) * chartWidth
+          const y = gridTop + chartHeight - ((yValue - minY) / safeYRange) * chartHeight
+          ctx.$callMethod('beginPath')
+          ctx.$callMethod('arc', x, y, symbolSize / 2, 0, 2 * Math.PI, false)
+          ctx.$callMethod('fill')
+          points.push({
+            x,
+            y,
+            value: [xValue, yValue],
+            name: value.length > 2 ? value[2] : `(${xValue}, ${yValue})`,
+            seriesName: serieObject.get('name') != null && `${serieObject.get('name')}` !== '' ? serieObject.get('name') : `Series ${index}`
+          })
+        })
+        this.seriesData.push({
+          name: serieObject.get('name') != null && `${serieObject.get('name')}` !== '' ? serieObject.get('name') : `Series ${index}`,
+          points,
+          color
+        })
+      })
+    },
+    handleTouchStart(event : any) {
+    },
+    handleTouchMove(event : any) {
+    },
+    handleTouchEnd(event : any) {
+    },
+    handleChartClick(x : number, y : number) {
+    },
+    setOption(option : any, notMerge : boolean = false) {
+      if (notMerge) {
+        this.drawChart(option)
+        return
+      }
+      try {
+        this.drawChart(option)
+      } catch (error) {
+        console.error('合并配置失败:', error)
+        this.drawChart(option)
+      }
+    },
+    resize() {
+      this.initCanvas()
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initCanvas()
+    })
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-scatter {
+  position: relative;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+</style>

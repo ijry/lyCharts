@@ -1,0 +1,63 @@
+{
+  "easycom": {
+    "custom": {
+      "^ly-(.*)": "@/uni_modules/ly-charts/components/ly-$1/ly-$1.uvue"
+    }
+  },
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "lyCharts"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsLine/chartsLine",
+      "style": {
+        "navigationBarTitleText": "折线图"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsBar/chartsBar",
+      "style": {
+        "navigationBarTitleText": "柱状图"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsPie/chartsPie",
+      "style": {
+        "navigationBarTitleText": "饼图"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsScatter/chartsScatter",
+      "style": {
+        "navigationBarTitleText": "散点图"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsRadar/chartsRadar",
+      "style": {
+        "navigationBarTitleText": "雷达图"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsGauge/chartsGauge",
+      "style": {
+        "navigationBarTitleText": "仪表盘"
+      }
+    },
+    {
+      "path": "pages/componentsD/chartsCandlestick/chartsCandlestick",
+      "style": {
+        "navigationBarTitleText": "K线图"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "lyCharts",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f6f7fb"
+  }
+}

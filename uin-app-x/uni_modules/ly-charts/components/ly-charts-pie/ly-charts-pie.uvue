@@ -1,0 +1,213 @@
+<template>
+  <view class="ly-charts-pie" :style="{ width: widthStyle, height: heightStyle }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchstart="handleTouchStart"
+      @touchend="handleTouchEnd"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyPieCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  clearRect(x : number, y : number, width : number, height : number) : void
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-pie',
+  props: {
+    option: {
+      type: Object,
+      default: () => ({})
+    },
+    width: {
+      type: [String, Number],
+      default: '100%'
+    },
+    height: {
+      type: [String, Number],
+      default: 300
+    }
+  },
+  data() {
+    return {
+      canvasId: `ly-charts-pie-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      sectorData: [] as any[],
+      touchPoint: {
+        x: 0,
+        y: 0
+      }
+    }
+  },
+  computed: {
+    widthStyle() {
+      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    },
+    heightStyle() {
+      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    }
+  },
+  watch: {
+    option: {
+      handler() {
+        this.drawChart()
+      },
+      deep: true
+    }
+  },
+  methods: {
+    initCanvas() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.drawChart()
+    },
+    getSeriesData() {
+      const optionObject = this.option as UTSJSONObject
+      const seriesValue = optionObject.get('series')
+      const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+      if (series.length === 0) {
+        return [] as any[]
+      }
+      const firstSerie = series[0] as UTSJSONObject
+      const dataValue = firstSerie.get('data')
+      return Array.isArray(dataValue) ? dataValue : [] as any[]
+    },
+    parsePercentOrNumber(value : any, total : number) {
+      if (typeof value === 'number') {
+        return value
+      }
+      if (typeof value === 'string' && value.endsWith('%')) {
+        return (parseFloat(value) / 100) * total
+      }
+      const parsed = parseFloat(`${value}`)
+      return isNaN(parsed) ? 0 : parsed
+    },
+    drawChart() {
+      const ctx = this.ctx
+      if (ctx == null || this.option == null) {
+        return
+      }
+      try {
+        const optionObject = this.option as UTSJSONObject
+        const backgroundColor = optionObject.get('backgroundColor')
+        const seriesData = this.getSeriesData()
+        ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        if (backgroundColor != null && `${backgroundColor}` !== '') {
+          ctx.$callMethod('setFillStyle', `${backgroundColor}`)
+          ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        }
+
+        const titleOption = optionObject.get('title')
+        const titleHeight = titleOption != null ? chartHelper.drawTitle(ctx, titleOption, this.canvasWidth) : 0
+        const legendOption = optionObject.get('legend') as UTSJSONObject | null
+        const legendData = legendOption != null ? legendOption.get('data') : null
+        const legendHeight = legendOption != null && legendData != null
+          ? chartHelper.drawLegend(ctx, legendOption, { top: titleHeight + 10, right: 20, bottom: 20, left: 20 }, this.canvasWidth, chartHelper.defaultColors, this.canvasHeight, titleHeight)
+          : 0
+        const centerX = this.canvasWidth / 2
+        const centerY = titleHeight + legendHeight + (this.canvasHeight - titleHeight - legendHeight) / 2
+        const radius = Math.min(this.canvasWidth, this.canvasHeight - titleHeight - legendHeight) * 0.32
+        let total = 0
+        seriesData.forEach((item : any) => {
+          const itemObject = item as UTSJSONObject
+          const value = itemObject.get('value')
+          const numericValue = typeof value === 'number' ? value : parseFloat(`${value}`)
+          if (!isNaN(numericValue)) {
+            total += numericValue
+          }
+        })
+        if (total > 0) {
+          let startAngle = -Math.PI / 2
+          seriesData.forEach((item : any, index : number) => {
+            const itemObject = item as UTSJSONObject
+            const rawValue = itemObject.get('value')
+            const value = typeof rawValue === 'number' ? rawValue : parseFloat(`${rawValue}`)
+            if (isNaN(value) || value === 0) {
+              return
+            }
+            const sliceAngle = value / total * Math.PI * 2
+            const colorValue = itemObject.get('itemStyle') as UTSJSONObject | null
+            const itemColor = colorValue != null ? colorValue.get('color') : null
+            const color = itemColor != null && `${itemColor}` !== '' ? `${itemColor}` : chartHelper.getColor(index)
+            ctx.$callMethod('beginPath')
+            ctx.$callMethod('moveTo', centerX, centerY)
+            ctx.$callMethod('setFillStyle', color)
+            ctx.$callMethod('arc', centerX, centerY, radius, startAngle, startAngle + sliceAngle, false)
+            ctx.$callMethod('closePath')
+            ctx.$callMethod('fill')
+            const midAngle = startAngle + sliceAngle / 2
+            const labelX = centerX + Math.cos(midAngle) * (radius + 16)
+            const labelY = centerY + Math.sin(midAngle) * (radius + 16)
+            ctx.$callMethod('setFillStyle', '#666')
+            ctx.$callMethod('setTextAlign', Math.cos(midAngle) >= 0 ? 'left' : 'right')
+            ctx.$callMethod('setTextBaseline', 'middle')
+            const name = itemObject.get('name')
+            ctx.$callMethod('fillText', `${name != null ? name : ''} ${Math.round(value)}`, labelX, labelY)
+            startAngle += sliceAngle
+          })
+        }
+        ctx.$callMethod('draw')
+      } catch (error) {
+        console.error('绘制饼图失败:', error)
+      }
+    },
+    handleTouchStart(event : any) {
+    },
+    handleTouchEnd(event : any) {
+    },
+    findSector(x : number, y : number) : any | null {
+      return null
+    },
+    updateData(data : any[]) {
+      this.drawChart()
+    },
+    getChartInstance() : any | null {
+      return null
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initCanvas()
+    })
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-pie {
+  position: relative;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+}
+</style>

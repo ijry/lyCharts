@@ -1,0 +1,183 @@
+<template>
+  <view class="ly-charts-gauge" :style="{ width: widthStyle, height: heightStyle }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchend="tap"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyGaugeCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  clearRect(x : number, y : number, width : number, height : number) : void
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-gauge',
+  props: {
+    width: {
+      type: [String, Number],
+      default: 300
+    },
+    height: {
+      type: [String, Number],
+      default: 300
+    },
+    option: {
+      type: Object,
+      default: () => ({})
+    }
+  },
+  data() {
+    return {
+      canvasId: `chart-gauge-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 300,
+      canvasHeight: 300,
+      progressValue: [] as any[],
+      animationTimer: 0,
+      isInited: false
+    }
+  },
+  computed: {
+    widthStyle() {
+      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    },
+    heightStyle() {
+      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    }
+  },
+  watch: {
+    option: {
+      handler(newVal : any) {
+        this.updateChart(newVal)
+      },
+      deep: true
+    }
+  },
+  methods: {
+    init() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.updateChart(this.option)
+    },
+    angleToRadBase(angle : number) {
+      if (angle >= 0) {
+        const normalizedAngle = angle / 360 * 2
+        return (2 - normalizedAngle) * Math.PI
+      }
+      const normalizedAngle = Math.abs(angle / 360 * 2)
+      return normalizedAngle * Math.PI
+    },
+    drawChart() {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      this.drawGauge(ctx)
+    },
+    drawGauge(ctx : any) {
+      const gaugeCtx = ctx as ComponentPublicInstance
+      gaugeCtx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+      const optionObject = this.option as UTSJSONObject
+      const seriesValue = optionObject.get('series')
+      const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+      const firstSeries = series.length > 0 ? series[0] as UTSJSONObject : null
+      const dataValue = firstSeries != null ? firstSeries.get('data') : null
+      const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+      const firstData = data.length > 0 ? data[0] as UTSJSONObject : null
+      const rawValue = firstData != null ? firstData.get('value') : 0
+      const value = typeof rawValue === 'number' ? rawValue : parseFloat(`${rawValue}`)
+      const safeValue = isNaN(value) ? 0 : Math.max(0, Math.min(100, value))
+      const centerX = this.canvasWidth / 2
+      const centerY = this.canvasHeight * 0.58
+      const radius = Math.min(this.canvasWidth, this.canvasHeight) * 0.34
+      const startAngle = Math.PI * 0.75
+      const endAngle = Math.PI * 2.25
+      const valueAngle = startAngle + (endAngle - startAngle) * safeValue / 100
+      gaugeCtx.$callMethod('beginPath')
+      gaugeCtx.$callMethod('setStrokeStyle', '#e5e7eb')
+      gaugeCtx.$callMethod('setLineWidth', 12)
+      gaugeCtx.$callMethod('arc', centerX, centerY, radius, startAngle, endAngle, false)
+      gaugeCtx.$callMethod('stroke')
+      gaugeCtx.$callMethod('beginPath')
+      gaugeCtx.$callMethod('setStrokeStyle', chartHelper.getColor(0))
+      gaugeCtx.$callMethod('setLineWidth', 12)
+      gaugeCtx.$callMethod('arc', centerX, centerY, radius, startAngle, valueAngle, false)
+      gaugeCtx.$callMethod('stroke')
+      gaugeCtx.$callMethod('setFillStyle', '#111827')
+      gaugeCtx.$callMethod('setFont', '22px sans-serif')
+      gaugeCtx.$callMethod('setTextAlign', 'center')
+      gaugeCtx.$callMethod('setTextBaseline', 'middle')
+      gaugeCtx.$callMethod('fillText', `${Math.round(safeValue)}`, centerX, centerY)
+      const name = firstData != null ? firstData.get('name') : null
+      if (name != null && `${name}` !== '') {
+        gaugeCtx.$callMethod('setFillStyle', '#6b7280')
+        gaugeCtx.$callMethod('setFont', '12px sans-serif')
+        gaugeCtx.$callMethod('fillText', `${name}`, centerX, centerY + 26)
+      }
+      gaugeCtx.$callMethod('draw')
+    },
+    updateChart(option : any) {
+      if (this.ctx == null || option == null) {
+        return
+      }
+      this.isInited = true
+      this.progressValue = [] as any[]
+      this.drawChart()
+    },
+    tap(event : any) {
+      this.$emit('click', event)
+    },
+    refresh() {
+      this.drawChart()
+    }
+  },
+  mounted() {
+    this.init()
+  },
+  beforeUnmount() {
+    if (this.animationTimer > 0) {
+      clearInterval(this.animationTimer)
+    }
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-gauge {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+}
+</style>

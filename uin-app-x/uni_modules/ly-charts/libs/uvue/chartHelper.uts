@@ -1,0 +1,467 @@
+type LyCanvasContext = ComponentPublicInstance
+
+class ChartHelper {
+  defaultColors = [
+    '#5470c6', '#91cc75', '#fac858', '#ee6666',
+    '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc'
+  ]
+
+  adjustedYMin = 0
+
+  adjustedYMax = 0
+
+  callCanvas(ctx : ComponentPublicInstance | null, method : string, args : any[] = []) : any | null {
+    if (ctx == null) {
+      return null
+    }
+    try {
+      if (args.length == 0) {
+        return ctx.$callMethod(method)
+      }
+      if (args.length == 1) {
+        return ctx.$callMethod(method, args[0])
+      }
+      if (args.length == 2) {
+        return ctx.$callMethod(method, args[0], args[1])
+      }
+      if (args.length == 3) {
+        return ctx.$callMethod(method, args[0], args[1], args[2])
+      }
+      if (args.length == 4) {
+        return ctx.$callMethod(method, args[0], args[1], args[2], args[3])
+      }
+      if (args.length == 5) {
+        return ctx.$callMethod(method, args[0], args[1], args[2], args[3], args[4])
+      }
+    } catch (error) {
+      return null
+    }
+    return null
+  }
+
+  calculateDataRange(series : any[]) {
+    let minY = Number.MAX_VALUE
+    let maxY = -Number.MAX_VALUE
+    if (series == null || !Array.isArray(series)) {
+      return { minY: 0, maxY: 1 }
+    }
+
+    let hasData = false
+    series.forEach((serie : any) => {
+      if (serie == null) {
+        return
+      }
+      const serieObject = serie as UTSJSONObject
+      const serieType = serieObject.get('type')
+      const serieData = serieObject.get('data')
+      if ((serieType === 'line' || serieType === 'bar') && Array.isArray(serieData)) {
+        serieData.forEach((value : any) => {
+          let actualValue : any | null = value
+          if (typeof value === 'object' && value !== null) {
+            actualValue = (value as UTSJSONObject).get('value')
+          }
+          if (typeof actualValue === 'number' && !isNaN(actualValue)) {
+            minY = Math.min(minY, actualValue)
+            maxY = Math.max(maxY, actualValue)
+            hasData = true
+          }
+        })
+      }
+    })
+
+    if (!hasData) {
+      return { minY: 0, maxY: 1 }
+    }
+
+    const range = maxY - minY
+    if (range == 0) {
+      minY -= 1
+      maxY += 1
+    } else {
+      const padding = range * 0.1
+      minY -= padding
+      maxY += padding
+    }
+
+    return { minY, maxY }
+  }
+
+  processXAxisData(xAxis : any, series : any[]) {
+    if (xAxis != null) {
+      const xAxisObject = xAxis as UTSJSONObject
+      const xAxisData = xAxisObject.get('data')
+      if (Array.isArray(xAxisData)) {
+        return xAxisData
+      }
+    }
+    if (series != null && series.length > 0) {
+      const firstSerie = series[0] as UTSJSONObject
+      const firstSerieData = firstSerie.get('data')
+      if (Array.isArray(firstSerieData)) {
+        return firstSerieData.map((_: any, index : number) => index)
+      }
+    }
+    return []
+  }
+
+  calculateYAxisTicks(min : number, max : number, tickCount : number = 5) {
+    if (min == max) {
+      if (min == 0) {
+        return {
+          min: 0,
+          max: 4,
+          step: 1,
+          tickCount: 4
+        }
+      }
+      const rawPadding = Math.abs(min) * 0.1
+      const padding = rawPadding != 0 ? rawPadding : 1
+      return {
+        min: min - padding,
+        max: max + padding,
+        step: (padding * 2) / 4,
+        tickCount: 4
+      }
+    }
+
+    const range = max - min
+    const approxStep = range / tickCount
+    const magnitude = Math.pow(10, Math.floor(Math.log10(approxStep)))
+    const stdSteps = [1, 2, 5, 10]
+    let step = stdSteps[0] * magnitude
+
+    stdSteps.forEach((stdStep : number) => {
+      const tempStep = stdStep * magnitude
+      if (tempStep >= approxStep && step == stdSteps[0] * magnitude) {
+        step = tempStep
+      }
+    })
+
+    const adjustedMin = Math.floor(min / step) * step
+    const adjustedMax = Math.ceil(max / step) * step
+    const actualTickCount = Math.round((adjustedMax - adjustedMin) / step)
+
+    if (actualTickCount == 0) {
+      return {
+        min,
+        max: max + 1,
+        step: 1,
+        tickCount: 1
+      }
+    }
+
+    return {
+      min: adjustedMin,
+      max: adjustedMax,
+      step,
+      tickCount: actualTickCount
+    }
+  }
+
+  drawGrid(ctx : LyCanvasContext, grid : any | null, canvasWidth : number, canvasHeight : number, xAxisCount : number, minY : number, maxY : number, drawVerticalLines : boolean = true, xAxisPadding : number = 0) {
+    if (ctx == null || grid == null) {
+      return
+    }
+
+    const gridObject = grid as UTSJSONObject
+    const gridLeftValue = gridObject.get('left')
+    const gridRightValue = gridObject.get('right')
+    const gridTopValue = gridObject.get('top')
+    const gridBottomValue = gridObject.get('bottom')
+    const gridLeft = typeof gridLeftValue === 'number' ? gridLeftValue : 0
+    const gridRight = typeof gridRightValue === 'number' ? gridRightValue : 0
+    const gridTop = typeof gridTopValue === 'number' ? gridTopValue : 0
+    const gridBottom = typeof gridBottomValue === 'number' ? gridBottomValue : 0
+    const chartWidth = canvasWidth - gridLeft - gridRight
+    const chartHeight = canvasHeight - gridTop - gridBottom
+    if (chartWidth <= 0 || chartHeight <= 0) {
+      return
+    }
+
+    this.callCanvas(ctx, 'setStrokeStyle', ['#eee'])
+    this.callCanvas(ctx, 'setLineWidth', [1])
+
+    const yAxisTicks = this.calculateYAxisTicks(minY, maxY, 5)
+    const yTickCount = yAxisTicks.tickCount as number
+    const yTickMin = yAxisTicks.min as number
+    const yTickMax = yAxisTicks.max as number
+    const yTickStep = yAxisTicks.step as number
+    for (let i = 0; i <= yTickCount; i++) {
+      const value = yTickMin + i * yTickStep
+      const ratio = (value - yTickMin) / (yTickMax - yTickMin)
+      const y = gridTop + chartHeight - ratio * chartHeight
+      this.callCanvas(ctx, 'beginPath')
+      this.callCanvas(ctx, 'moveTo', [gridLeft, y])
+      this.callCanvas(ctx, 'lineTo', [gridLeft + chartWidth, y])
+      this.callCanvas(ctx, 'stroke')
+    }
+
+    if (drawVerticalLines && xAxisCount > 1) {
+      for (let i = 0; i < xAxisCount; i++) {
+        const x = gridLeft + xAxisPadding + (i / (xAxisCount - 1)) * (chartWidth - 2 * xAxisPadding)
+        this.callCanvas(ctx, 'beginPath')
+        this.callCanvas(ctx, 'moveTo', [x, gridTop])
+        this.callCanvas(ctx, 'lineTo', [x, gridTop + chartHeight])
+        this.callCanvas(ctx, 'stroke')
+      }
+    }
+  }
+
+  drawAxis(ctx : LyCanvasContext, grid : any | null, canvasWidth : number, canvasHeight : number, xAxisData : any[], minY : number, maxY : number, xAxisOpt : any | null, yAxisOpt : any | null, chartType : string = 'line', xAxisPadding : number = 0) {
+    if (ctx == null || grid == null) {
+      return
+    }
+
+    const gridObject = grid as UTSJSONObject
+    const gridLeftValue = gridObject.get('left')
+    const gridRightValue = gridObject.get('right')
+    const gridTopValue = gridObject.get('top')
+    const gridBottomValue = gridObject.get('bottom')
+    const gridLeft = typeof gridLeftValue === 'number' ? gridLeftValue : 0
+    const gridRight = typeof gridRightValue === 'number' ? gridRightValue : 0
+    const gridTop = typeof gridTopValue === 'number' ? gridTopValue : 0
+    const gridBottom = typeof gridBottomValue === 'number' ? gridBottomValue : 0
+    const chartWidth = canvasWidth - gridLeft - gridRight
+    const chartHeight = canvasHeight - gridTop - gridBottom
+    if (chartWidth <= 0 || chartHeight <= 0) {
+      return
+    }
+
+    this.callCanvas(ctx, 'setStrokeStyle', ['#ccc'])
+    this.callCanvas(ctx, 'setLineWidth', [1])
+
+    const xAxisObject = xAxisOpt != null ? xAxisOpt as UTSJSONObject : null
+    const yAxisObject = yAxisOpt != null ? yAxisOpt as UTSJSONObject : null
+    const xAxisLine = xAxisObject != null ? xAxisObject.get('axisLine') : null
+    const yAxisLine = yAxisObject != null ? yAxisObject.get('axisLine') : null
+    const xAxisLabel = xAxisObject != null ? xAxisObject.get('axisLabel') : null
+    const yAxisLabel = yAxisObject != null ? yAxisObject.get('axisLabel') : null
+    const xAxisLineObject = xAxisLine != null ? xAxisLine as UTSJSONObject : null
+    const yAxisLineObject = yAxisLine != null ? yAxisLine as UTSJSONObject : null
+    const xAxisLabelObject = xAxisLabel != null ? xAxisLabel as UTSJSONObject : null
+    const yAxisLabelObject = yAxisLabel != null ? yAxisLabel as UTSJSONObject : null
+    const showXAxisLineValue = xAxisLineObject != null ? xAxisLineObject.get('show') : null
+    if (showXAxisLineValue == null ? true : showXAxisLineValue == true) {
+      this.callCanvas(ctx, 'beginPath')
+      this.callCanvas(ctx, 'moveTo', [gridLeft, canvasHeight - gridBottom])
+      this.callCanvas(ctx, 'lineTo', [gridLeft + chartWidth, canvasHeight - gridBottom])
+      this.callCanvas(ctx, 'stroke')
+    }
+
+    const showYAxisLineValue = yAxisLineObject != null ? yAxisLineObject.get('show') : null
+    if (showYAxisLineValue == null ? false : showYAxisLineValue == true) {
+      this.callCanvas(ctx, 'beginPath')
+      this.callCanvas(ctx, 'moveTo', [gridLeft, gridTop])
+      this.callCanvas(ctx, 'lineTo', [gridLeft, canvasHeight - gridBottom])
+      this.callCanvas(ctx, 'stroke')
+    }
+
+    const showXAxisLabelValue = xAxisLabelObject != null ? xAxisLabelObject.get('show') : null
+    if (showXAxisLabelValue == null ? true : showXAxisLabelValue == true) {
+      const xAxisLabelColorValue = xAxisLabelObject != null ? xAxisLabelObject.get('color') : null
+      const xAxisFontSizeValue = xAxisLabelObject != null ? xAxisLabelObject.get('fontSize') : null
+      const xAxisLabelColor = xAxisLabelColorValue != null && `${xAxisLabelColorValue}` !== '' ? `${xAxisLabelColorValue}` : '#666'
+      const xAxisFontSize = typeof xAxisFontSizeValue === 'number' ? xAxisFontSizeValue : 12
+      this.callCanvas(ctx, 'setFillStyle', [xAxisLabelColor])
+      this.callCanvas(ctx, 'setFont', [`${xAxisFontSize}px sans-serif`])
+      this.callCanvas(ctx, 'setTextAlign', ['center'])
+      this.callCanvas(ctx, 'setTextBaseline', ['top'])
+
+      if (xAxisData != null && Array.isArray(xAxisData) && xAxisData.length > 0) {
+        if (chartType === 'bar') {
+          this.drawBarXAxisLabels(ctx, xAxisData, grid, chartWidth, canvasHeight, xAxisFontSize, xAxisPadding)
+        } else if (xAxisData.length <= 5) {
+          xAxisData.forEach((label : any, i : number) => {
+            const x = gridLeft + xAxisPadding + (i / Math.max(xAxisData.length - 1, 1)) * (chartWidth - 2 * xAxisPadding)
+            this.callCanvas(ctx, 'fillText', [`${label}`, x, canvasHeight - gridBottom + 10])
+          })
+        } else {
+          this.drawXAxisLabels(ctx, xAxisData, grid, chartWidth, canvasHeight, xAxisFontSize, xAxisPadding)
+        }
+      }
+    }
+
+    const yAxisTicks = this.calculateYAxisTicks(minY, maxY, 5)
+    const yTickCount = yAxisTicks.tickCount as number
+    const yTickMin = yAxisTicks.min as number
+    const yTickMax = yAxisTicks.max as number
+    const yTickStep = yAxisTicks.step as number
+    this.adjustedYMin = yTickMin
+    this.adjustedYMax = yTickMax
+    const showYAxisLabelValue = yAxisLabelObject != null ? yAxisLabelObject.get('show') : null
+    if (showYAxisLabelValue == null ? false : showYAxisLabelValue == true) {
+      const yAxisLabelColorValue = yAxisLabelObject != null ? yAxisLabelObject.get('color') : null
+      const yAxisLabelColor = yAxisLabelColorValue != null && `${yAxisLabelColorValue}` !== '' ? `${yAxisLabelColorValue}` : '#666'
+      this.callCanvas(ctx, 'setFillStyle', [yAxisLabelColor])
+      this.callCanvas(ctx, 'setTextAlign', ['right'])
+      this.callCanvas(ctx, 'setTextBaseline', ['middle'])
+
+      for (let i = 0; i <= yTickCount; i++) {
+        const value = yTickMin + i * yTickStep
+        const ratio = (value - yTickMin) / (yTickMax - yTickMin)
+        const y = gridTop + chartHeight - ratio * chartHeight
+        this.callCanvas(ctx, 'fillText', [Math.round(value).toString(), gridLeft - 10, y])
+      }
+    }
+  }
+
+  drawBarXAxisLabels(ctx : LyCanvasContext, xAxisData : any[], grid : any | null, chartWidth : number, canvasHeight : number, fontSize : number, xAxisPadding : number = 0) {
+    const labelCount = xAxisData.length
+    if (labelCount <= 0) {
+      return
+    }
+
+    const availableWidth = chartWidth - 2 * xAxisPadding
+    const avgLabelWidth = availableWidth / labelCount
+    const maxLabelLength = Math.floor(avgLabelWidth / (fontSize * 0.6))
+    let hasLongLabel = false
+    xAxisData.forEach((label : any) => {
+      if (`${label}`.length > maxLabelLength && maxLabelLength > 0) {
+        hasLongLabel = true
+      }
+    })
+
+    if (hasLongLabel) {
+      this.callCanvas(ctx, 'save')
+      this.callCanvas(ctx, 'setTextAlign', ['right'])
+      this.callCanvas(ctx, 'setTextBaseline', ['middle'])
+    } else {
+      this.callCanvas(ctx, 'setTextAlign', ['center'])
+      this.callCanvas(ctx, 'setTextBaseline', ['top'])
+    }
+
+    const gridObject = grid as UTSJSONObject
+    const gridLeftValue = gridObject.get('left')
+    const gridBottomValue = gridObject.get('bottom')
+    const gridLeft = typeof gridLeftValue === 'number' ? gridLeftValue : 0
+    const gridBottom = typeof gridBottomValue === 'number' ? gridBottomValue : 0
+    xAxisData.forEach((label : any, i : number) => {
+      const x = gridLeft + xAxisPadding + ((i + 0.5) / labelCount) * (chartWidth - 2 * xAxisPadding)
+      if (hasLongLabel) {
+        this.callCanvas(ctx, 'save')
+        this.callCanvas(ctx, 'translate', [x, canvasHeight - gridBottom + 30])
+        this.callCanvas(ctx, 'rotate', [-45 * Math.PI / 180])
+        this.callCanvas(ctx, 'fillText', [`${label}`, 0, 0])
+        this.callCanvas(ctx, 'restore')
+      } else {
+        this.callCanvas(ctx, 'fillText', [`${label}`, x, canvasHeight - gridBottom + 10])
+      }
+    })
+
+    if (hasLongLabel) {
+      this.callCanvas(ctx, 'restore')
+    }
+  }
+
+  drawXAxisLabels(ctx : LyCanvasContext, xAxisData : any[], grid : any | null, chartWidth : number, canvasHeight : number, fontSize : number, xAxisPadding : number = 0) {
+    const labelCount = xAxisData.length
+    let totalLabelLength = 0
+    xAxisData.forEach((label : any) => {
+      totalLabelLength += `${label}`.length
+    })
+
+    const avgLabelLength = totalLabelLength / labelCount
+    const estimatedLabelWidth = Math.ceil(avgLabelLength * fontSize * 0.6 + 10)
+    let maxLabels = Math.max(Math.min(labelCount, Math.floor((chartWidth - 2 * xAxisPadding) / estimatedLabelWidth)), 2)
+    const indicesToShow = [] as number[]
+    if (labelCount > 0) {
+      indicesToShow.push(0)
+      if (labelCount > 1) {
+        indicesToShow.push(labelCount - 1)
+      }
+    }
+
+    const availableWidth = chartWidth - 2 * xAxisPadding
+    const avgLabelWidth = availableWidth / labelCount
+    const maxLabelLength = Math.floor(avgLabelWidth / (fontSize * 0.7))
+    let hasLongLabel = false
+    xAxisData.forEach((label : any) => {
+      if (`${label}`.length > maxLabelLength && maxLabelLength > 0) {
+        hasLongLabel = true
+        maxLabels = labelCount
+      }
+    })
+
+    if (hasLongLabel) {
+      this.callCanvas(ctx, 'save')
+      this.callCanvas(ctx, 'setTextAlign', ['right'])
+      this.callCanvas(ctx, 'setTextBaseline', ['middle'])
+    } else {
+      this.callCanvas(ctx, 'setTextAlign', ['center'])
+      this.callCanvas(ctx, 'setTextBaseline', ['top'])
+    }
+
+    if (maxLabels >= 3 && labelCount > 2) {
+      const middleLabels = Math.min(maxLabels - 2, labelCount - 2)
+      if (middleLabels > 0) {
+        const step = (labelCount - 1) / (middleLabels + 1)
+        for (let i = 1; i <= middleLabels; i++) {
+          const index = Math.round(i * step)
+          if (index > 0 && index < labelCount - 1 && indicesToShow.indexOf(index) == -1) {
+            indicesToShow.push(index)
+          }
+        }
+      }
+    }
+
+    indicesToShow.sort((a : number, b : number) => a - b)
+    const gridObject = grid as UTSJSONObject
+    const gridLeftValue = gridObject.get('left')
+    const gridBottomValue = gridObject.get('bottom')
+    const gridLeft = typeof gridLeftValue === 'number' ? gridLeftValue : 0
+    const gridBottom = typeof gridBottomValue === 'number' ? gridBottomValue : 0
+    indicesToShow.forEach((index : number) => {
+      const x = gridLeft + xAxisPadding + (index / Math.max(labelCount - 1, 1)) * (chartWidth - 2 * xAxisPadding)
+      const label = xAxisData[index] != null ? xAxisData[index] : index
+      if (hasLongLabel) {
+        this.callCanvas(ctx, 'save')
+        this.callCanvas(ctx, 'translate', [x + 20, canvasHeight - gridBottom + 10])
+        this.callCanvas(ctx, 'rotate', [-45 * Math.PI / 180])
+        this.callCanvas(ctx, 'fillText', [`${label}`, 0, 0])
+        this.callCanvas(ctx, 'restore')
+      } else {
+        this.callCanvas(ctx, 'fillText', [`${label}`, x, canvasHeight - gridBottom + 10])
+      }
+    })
+
+    if (hasLongLabel) {
+      this.callCanvas(ctx, 'restore')
+    }
+  }
+
+  drawTitle(ctx : LyCanvasContext, titleOption : any | null, canvasWidth : number) {
+    if (ctx == null || titleOption == null) {
+      return 0
+    }
+    const titleObject = titleOption as UTSJSONObject
+    const titleText = titleObject.get('text')
+    if (titleText == null || `${titleText}` === '') {
+      return 0
+    }
+
+    const textStyle = titleObject.get('textStyle')
+    const textStyleObject = textStyle != null ? textStyle as UTSJSONObject : null
+    const fontSizeValue = textStyleObject != null ? textStyleObject.get('fontSize') : null
+    const fontFamilyValue = textStyleObject != null ? textStyleObject.get('fontFamily') : null
+    const colorValue = textStyleObject != null ? textStyleObject.get('color') : null
+    const fontSize = typeof fontSizeValue === 'number' ? fontSizeValue : 16
+    const fontFamily = fontFamilyValue != null && `${fontFamilyValue}` !== '' ? `${fontFamilyValue}` : 'sans-serif'
+    const color = colorValue != null && `${colorValue}` !== '' ? `${colorValue}` : '#333'
+    this.callCanvas(ctx, 'setFont', [`${fontSize}px ${fontFamily}`])
+    this.callCanvas(ctx, 'setFillStyle', [color])
+    this.callCanvas(ctx, 'setTextAlign', ['center'])
+    this.callCanvas(ctx, 'setTextBaseline', ['top'])
+    this.callCanvas(ctx, 'fillText', [`${titleText}`, (canvasWidth != 0 ? canvasWidth : 0) / 2, 10])
+    return fontSize + 20
+  }
+
+  drawLegend(ctx : LyCanvasContext, legendOption : any | null, grid : any | null, canvasWidth : number, colors : string[], canvasHeight : number, titleHeight : number = 0) {
+    return 0
+  }
+
+  getColor(index : number) {
+    return this.defaultColors[index % this.defaultColors.length]
+  }
+}
+
+export default new ChartHelper()

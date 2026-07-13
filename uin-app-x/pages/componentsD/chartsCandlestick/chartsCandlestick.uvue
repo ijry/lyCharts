@@ -1,0 +1,563 @@
+<template>
+  <view class="u-page">
+    <view class="u-page__item">
+      <text class="u-page__item__title">K线图（ECharts 风格配置）</text>
+      <view class="period-tabs">
+        <view
+          v-for="(item, index) in periodList"
+          :key="item"
+          class="period-tab"
+          :class="{ 'period-tab--active': activePeriod === index }"
+          @click="changePeriod(index)"
+        >
+          <text
+            class="period-tab__text"
+            :class="{ 'period-tab__text--active': activePeriod === index }"
+          >{{ item }}</text>
+        </view>
+      </view>
+      <view class="u-page__item__content">
+        <ly-charts-candlestick
+          ref="candlestickChart"
+          :option="currentOption"
+          width="700rpx"
+          height="480px"
+          @click="onChartClick"
+          @tooltipShow="onTooltipShow"
+        />
+      </view>
+      <view v-if="tooltipVisible" class="tooltip-card">
+        <text class="tooltip-card__title">{{ tooltipName }}</text>
+        <text class="tooltip-card__text">
+          开 {{ tooltipOpen }} / 收 {{ tooltipClose }} / 低 {{ tooltipLowest }} / 高 {{ tooltipHighest }}
+        </text>
+        <text class="tooltip-card__text">
+          涨跌 {{ tooltipChangeText }} / 成交量 {{ tooltipVolume }}
+        </text>
+      </view>
+      <text class="chart-hint">拖动图表查看十字准星，拖动底部滑块缩放区间。</text>
+    </view>
+  </view>
+</template>
+
+<script lang="uts">
+const upColor = '#ec0000';
+const upBorderColor = '#8A0000';
+const downColor = '#00da3c';
+const downBorderColor = '#008F28';
+
+export default {
+  data() {
+    return {
+      periodList: ['日K', '1小时', '周K', '月K'],
+      activePeriod: 0,
+      currentOption: {},
+      tooltipVisible: false,
+      tooltipName: '',
+      tooltipOpen: '',
+      tooltipClose: '',
+      tooltipLowest: '',
+      tooltipHighest: '',
+      tooltipChangeText: '',
+      tooltipVolume: '',
+      rawDailyData: [
+        ['2013/1/24', 2320.26, 2320.26, 2287.3, 2362.94],
+        ['2013/1/25', 2300, 2291.3, 2288.26, 2308.38],
+        ['2013/1/28', 2295.35, 2346.5, 2295.35, 2346.92],
+        ['2013/1/29', 2347.22, 2358.98, 2337.35, 2363.8],
+        ['2013/1/30', 2360.75, 2382.48, 2347.89, 2383.76],
+        ['2013/1/31', 2383.43, 2385.42, 2371.23, 2391.82],
+        ['2013/2/1', 2377.41, 2419.02, 2369.57, 2421.15],
+        ['2013/2/4', 2425.92, 2428.15, 2417.58, 2440.38],
+        ['2013/2/5', 2411, 2433.13, 2403.3, 2437.42],
+        ['2013/2/6', 2432.68, 2434.48, 2427.7, 2441.73],
+        ['2013/2/7', 2430.69, 2418.53, 2394.22, 2433.89],
+        ['2013/2/8', 2416.62, 2432.4, 2414.4, 2443.03],
+        ['2013/2/18', 2441.91, 2421.56, 2415.43, 2444.8],
+        ['2013/2/19', 2420.26, 2382.91, 2373.53, 2427.07],
+        ['2013/2/20', 2383.49, 2397.18, 2370.61, 2397.94],
+        ['2013/2/21', 2378.82, 2325.95, 2309.17, 2378.82],
+        ['2013/2/22', 2322.94, 2314.16, 2308.76, 2330.88],
+        ['2013/2/25', 2320.62, 2325.82, 2315.01, 2338.78],
+        ['2013/2/26', 2313.74, 2293.34, 2289.89, 2340.71],
+        ['2013/2/27', 2297.77, 2313.22, 2292.03, 2324.63],
+        ['2013/2/28', 2322.32, 2365.59, 2308.92, 2366.16],
+        ['2013/3/1', 2364.54, 2359.51, 2330.86, 2369.65],
+        ['2013/3/4', 2332.08, 2273.4, 2259.25, 2333.54],
+        ['2013/3/5', 2274.81, 2326.31, 2270.1, 2328.14],
+        ['2013/3/6', 2333.61, 2347.18, 2321.6, 2351.44],
+        ['2013/3/7', 2340.44, 2324.29, 2304.27, 2352.02],
+        ['2013/3/8', 2326.42, 2318.61, 2314.59, 2333.67],
+        ['2013/3/11', 2314.68, 2310.59, 2296.58, 2320.96],
+        ['2013/3/12', 2309.16, 2286.6, 2264.83, 2333.29],
+        ['2013/3/13', 2282.17, 2263.97, 2253.25, 2286.33],
+        ['2013/3/14', 2255.77, 2270.28, 2253.31, 2276.22],
+        ['2013/3/15', 2269.31, 2278.4, 2250, 2312.08],
+        ['2013/3/18', 2267.29, 2240.02, 2239.21, 2276.05],
+        ['2013/3/19', 2244.26, 2257.43, 2232.02, 2261.31],
+        ['2013/3/20', 2257.74, 2317.37, 2257.42, 2317.86],
+        ['2013/3/21', 2318.21, 2324.24, 2311.6, 2330.81],
+        ['2013/3/22', 2321.4, 2328.28, 2314.97, 2332],
+        ['2013/3/25', 2334.74, 2326.72, 2319.91, 2344.89],
+        ['2013/3/26', 2318.58, 2297.67, 2281.12, 2319.99],
+        ['2013/3/27', 2299.38, 2301.26, 2289, 2323.48],
+        ['2013/3/28', 2273.55, 2236.3, 2232.91, 2273.55],
+        ['2013/3/29', 2238.49, 2236.62, 2228.81, 2246.87],
+        ['2013/4/1', 2229.46, 2234.4, 2227.31, 2243.95],
+        ['2013/4/2', 2234.9, 2227.74, 2220.44, 2253.42],
+        ['2013/4/3', 2232.69, 2225.29, 2217.25, 2241.34],
+        ['2013/4/8', 2196.24, 2211.59, 2180.67, 2212.59],
+        ['2013/4/9', 2215.47, 2225.77, 2215.47, 2234.73],
+        ['2013/4/10', 2224.93, 2226.13, 2212.56, 2233.04],
+        ['2013/4/11', 2236.98, 2219.55, 2217.26, 2242.48],
+        ['2013/4/12', 2218.09, 2206.78, 2204.44, 2226.26],
+        ['2013/4/15', 2199.91, 2181.94, 2177.39, 2204.99],
+        ['2013/4/16', 2169.63, 2194.85, 2165.78, 2196.43],
+        ['2013/4/17', 2195.03, 2193.8, 2178.47, 2197.51],
+        ['2013/4/18', 2181.82, 2197.6, 2175.44, 2206.03],
+        ['2013/4/19', 2201.12, 2244.64, 2200.58, 2250.11],
+        ['2013/4/22', 2236.4, 2242.17, 2232.26, 2245.12],
+        ['2013/4/23', 2242.62, 2184.54, 2182.81, 2242.62],
+        ['2013/4/24', 2187.35, 2218.32, 2184.11, 2226.12],
+        ['2013/4/25', 2213.19, 2199.31, 2191.85, 2224.63],
+        ['2013/4/26', 2203.89, 2177.91, 2173.86, 2210.58],
+        ['2013/5/2', 2170.78, 2174.12, 2161.14, 2179.65],
+        ['2013/5/3', 2179.05, 2205.5, 2179.05, 2222.81],
+        ['2013/5/6', 2212.5, 2231.17, 2212.5, 2236.07],
+        ['2013/5/7', 2227.86, 2235.57, 2219.44, 2240.26],
+        ['2013/5/8', 2242.39, 2246.3, 2235.42, 2255.21],
+        ['2013/5/9', 2246.96, 2232.97, 2221.38, 2247.86],
+        ['2013/5/10', 2228.82, 2246.83, 2225.81, 2247.67],
+        ['2013/5/13', 2247.68, 2241.92, 2231.36, 2250.85],
+        ['2013/5/14', 2238.9, 2217.01, 2205.87, 2239.93],
+        ['2013/5/15', 2217.09, 2224.8, 2213.58, 2225.19],
+        ['2013/5/16', 2221.34, 2251.81, 2210.77, 2252.87],
+        ['2013/5/17', 2249.81, 2282.87, 2248.41, 2288.09],
+        ['2013/5/20', 2286.33, 2299.99, 2281.9, 2309.39],
+        ['2013/5/21', 2297.11, 2305.11, 2290.12, 2305.3],
+        ['2013/5/22', 2303.75, 2302.4, 2292.43, 2314.18],
+        ['2013/5/23', 2293.81, 2275.67, 2274.1, 2304.95],
+        ['2013/5/24', 2281.45, 2288.53, 2270.25, 2292.59]
+      ]
+    };
+  },
+  mounted() {
+    this.updateOption();
+  },
+  methods: {
+    splitData(rawData : any[][]) : UTSJSONObject {
+      const categoryData = [] as any[];
+      const values = [] as any[];
+      const volumes = [] as any[];
+      rawData.forEach((row : any) => {
+        const item = (row as any[]).slice();
+        const category = item.shift();
+        categoryData.push(category != null ? category : '');
+        volumes.push(item[4] != null ? item[4] : 0);
+        values.push(item.slice(0, 4));
+      });
+      return {
+        categoryData,
+        values,
+        volumes
+      } as UTSJSONObject;
+    },
+    calculateMA(dayCount : number, values : any[]) {
+      const result = [] as any[];
+      for (let i = 0; i < values.length; i++) {
+        if (i < dayCount - 1) {
+          result.push('-');
+          continue;
+        }
+        let sum = 0;
+        for (let j = 0; j < dayCount; j++) {
+          const maItem = values[i - j] as any[];
+          sum += parseFloat(`${maItem[1]}`);
+        }
+        result.push(parseFloat((sum / dayCount).toFixed(2)));
+      }
+      return result;
+    },
+    decorateDailyData(source : any[][]) : any[][] {
+      return source.map((item : any, index : number) => {
+        const row = item as any[];
+        const priceMove = Math.abs(parseFloat(`${row[2]}`) - parseFloat(`${row[1]}`));
+        const priceRange = Math.abs(parseFloat(`${row[4]}`) - parseFloat(`${row[3]}`));
+        const volume = Math.round(
+          1800000 +
+          priceMove * 130000 +
+          priceRange * 85000 +
+          (index % 6) * 160000 +
+          (index % 3) * 90000
+        );
+        return [...row, volume];
+      });
+    },
+    aggregateData(source : any[][], groupSize : number) : any[][] {
+      const result = [] as any[][];
+      for (let i = 0; i < source.length; i += groupSize) {
+        const group = source.slice(i, i + groupSize);
+        if (group.length === 0) {
+          continue;
+        }
+        const firstItem = group[0] as any[];
+        const lastItem = group[group.length - 1] as any[];
+        const open = firstItem[1];
+        const close = lastItem[2];
+        let low = parseFloat(`${firstItem[3]}`);
+        let high = parseFloat(`${firstItem[4]}`);
+        let volume = 0;
+        group.forEach((item : any) => {
+          const row = item as any[];
+          low = Math.min(low, parseFloat(`${row[3]}`));
+          high = Math.max(high, parseFloat(`${row[4]}`));
+          volume += row[5] != null ? parseFloat(`${row[5]}`) : 0;
+        });
+        result.push([firstItem[0], open, close, low, high, volume]);
+      }
+      return result;
+    },
+    buildHourlyData(source : any[][]) : any[][] {
+      const slots = ['09:30', '10:30', '13:30', '14:30'];
+      const result = [] as any[][];
+      source.slice(-12).forEach((item : any) => {
+        const row = item as any[];
+        const date = row[0];
+        const open = parseFloat(`${row[1]}`);
+        const close = parseFloat(`${row[2]}`);
+        const low = parseFloat(`${row[3]}`);
+        const high = parseFloat(`${row[4]}`);
+        const diff = close - open;
+        const volume = row[5] != null ? parseFloat(`${row[5]}`) : 0;
+        const volumeRatios = [0.32, 0.18, 0.27, 0.23];
+        const points = [
+          [open, open + diff * 0.25, Math.min(low, open - Math.abs(diff) * 0.08), Math.max(high * 0.998, open + Math.abs(diff) * 0.15)],
+          [open + diff * 0.25, open + diff * 0.55, Math.min(low * 1.001, open + diff * 0.2), Math.max(high, open + diff * 0.6)],
+          [open + diff * 0.55, open + diff * 0.8, Math.min(low, open + diff * 0.5), Math.max(high, open + diff * 0.9)],
+          [open + diff * 0.8, close, Math.min(low, close - Math.abs(diff) * 0.12), Math.max(high, close + Math.abs(diff) * 0.12)]
+        ];
+        points.forEach((point : number[], index : number) => {
+          const hourOpen = parseFloat(point[0].toFixed(2));
+          const hourClose = parseFloat(point[1].toFixed(2));
+          const hourLow = parseFloat(Math.min(point[0], point[1], point[2]).toFixed(2));
+          const hourHigh = parseFloat(Math.max(point[0], point[1], point[3]).toFixed(2));
+          result.push([`${date} ${slots[index]}`, hourOpen, hourClose, hourLow, hourHigh, Math.round(volume * volumeRatios[index])]);
+        });
+      });
+      return result;
+    },
+    getPeriodRawData() : any[][] {
+      const baseDailyData = this.decorateDailyData(this.rawDailyData as any[][]);
+      if (this.activePeriod === 1) {
+        return this.buildHourlyData(baseDailyData);
+      }
+      if (this.activePeriod === 2) {
+        return this.aggregateData(baseDailyData, 5);
+      }
+      if (this.activePeriod === 3) {
+        return this.aggregateData(baseDailyData, 20);
+      }
+      return baseDailyData.slice();
+    },
+    formatVolume(value : any) {
+      if (value == null) {
+        return '--';
+      }
+      const numericValue = parseFloat(`${value}`);
+      if (numericValue >= 100000000) {
+        return `${(numericValue / 100000000).toFixed(2)}亿`;
+      }
+      if (numericValue >= 10000) {
+        return `${(numericValue / 10000).toFixed(2)}万`;
+      }
+      return `${numericValue}`;
+    },
+    buildOption(periodLabel: string, data0: any) {
+      const candleName = periodLabel;
+      const dataObject = data0 as UTSJSONObject;
+      const categoryData = dataObject.get('categoryData') as any[];
+      const values = dataObject.get('values') as any[];
+      const volumes = dataObject.get('volumes') as any[];
+      const markerIndex = Math.max(0, categoryData.length - 5);
+      const markerCategory = categoryData[markerIndex] != null ? categoryData[markerIndex] : '';
+      return {
+        title: {
+          text: '上证指数',
+          left: 0
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'cross'
+          }
+        },
+        legend: {
+          data: [candleName, 'MA5', 'MA10', 'MA20', 'MA30', '成交量'],
+          top: 20
+        },
+        grid: {
+          left: '12%',
+          right: '8%',
+          bottom: '18%'
+        },
+        xAxis: {
+          type: 'category',
+          data: categoryData,
+          boundaryGap: false,
+          axisLine: { onZero: false },
+          splitLine: { show: false },
+          min: 'dataMin',
+          max: 'dataMax'
+        },
+        yAxis: [
+          {
+            scale: true,
+            splitArea: {
+              show: true
+            }
+          },
+          {
+            scale: true,
+            axisLabel: {
+              formatter: (value: number) => this.formatVolume(value)
+            }
+          }
+        ],
+        dataZoom: [
+          {
+            type: 'inside',
+            start: 45,
+            end: 100
+          },
+          {
+            show: true,
+            type: 'slider',
+            top: '90%',
+            start: 45,
+            end: 100
+          }
+        ],
+        series: [
+          {
+            name: candleName,
+            type: 'candlestick',
+            data: values,
+            itemStyle: {
+              color: upColor,
+              color0: downColor,
+              borderColor: upBorderColor,
+              borderColor0: downBorderColor
+            },
+            markPoint: {
+              data: [
+                {
+                  name: 'Mark',
+                  coord: [markerCategory, (values[Math.max(0, values.length - 5)] as any[])[1] != null ? (values[Math.max(0, values.length - 5)] as any[])[1] : 0],
+                  value: (values[Math.max(0, values.length - 5)] as any[])[1] != null ? (values[Math.max(0, values.length - 5)] as any[])[1] : 0,
+                  itemStyle: {
+                    color: 'rgb(41,60,85)'
+                  }
+                },
+                {
+                  name: 'highest value',
+                  type: 'max',
+                  valueDim: 'highest'
+                },
+                {
+                  name: 'lowest value',
+                  type: 'min',
+                  valueDim: 'lowest'
+                },
+                {
+                  name: 'average value on close',
+                  type: 'average',
+                  valueDim: 'close'
+                }
+              ]
+            },
+            markLine: {
+              data: [
+                [
+                  {
+                    name: 'from lowest to highest',
+                    type: 'min',
+                    valueDim: 'lowest'
+                  },
+                  {
+                    type: 'max',
+                    valueDim: 'highest'
+                  }
+                ],
+                {
+                  name: 'min line on close',
+                  type: 'min',
+                  valueDim: 'close'
+                },
+                {
+                  name: 'max line on close',
+                  type: 'max',
+                  valueDim: 'close'
+                }
+              ]
+            }
+          },
+          {
+            name: '成交量',
+            type: 'bar',
+            data: volumes
+          },
+          {
+            name: 'MA5',
+            type: 'line',
+            data: this.calculateMA(5, values),
+            smooth: true,
+            lineStyle: {
+              color: '#f59e0b',
+              opacity: 0.85
+            }
+          },
+          {
+            name: 'MA10',
+            type: 'line',
+            data: this.calculateMA(10, values),
+            smooth: true,
+            lineStyle: {
+              color: '#3b82f6',
+              opacity: 0.85
+            }
+          },
+          {
+            name: 'MA20',
+            type: 'line',
+            data: this.calculateMA(20, values),
+            smooth: true,
+            lineStyle: {
+              color: '#10b981',
+              opacity: 0.85
+            }
+          },
+          {
+            name: 'MA30',
+            type: 'line',
+            data: this.calculateMA(30, values),
+            smooth: true,
+            lineStyle: {
+              color: '#8b5cf6',
+              opacity: 0.85
+            }
+          }
+        ]
+      };
+    },
+    updateOption() {
+      const rawData = this.getPeriodRawData();
+      const data0 = this.splitData(rawData);
+      this.currentOption = this.buildOption(this.periodList[this.activePeriod], data0);
+    },
+    changePeriod(index : number) {
+      if (this.activePeriod === index) {
+        return;
+      }
+      this.activePeriod = index;
+      this.updateOption();
+    },
+    onTooltipShow(event : any) {
+      if (event == null) {
+        return;
+      }
+      const eventObject = event as UTSJSONObject;
+      const seriesType = eventObject.get('seriesType');
+      if (seriesType !== 'candlestick') {
+        return;
+      }
+      const changeValue = eventObject.get('change');
+      const change = parseFloat(`${changeValue != null ? changeValue : 0}`);
+      const changeSign = change > 0 ? '+' : '';
+      const changePercentValue = eventObject.get('changePercent');
+      this.tooltipName = `${eventObject.get('name')}`;
+      this.tooltipOpen = parseFloat(`${eventObject.get('open')}`).toFixed(2);
+      this.tooltipClose = parseFloat(`${eventObject.get('close')}`).toFixed(2);
+      this.tooltipLowest = parseFloat(`${eventObject.get('lowest')}`).toFixed(2);
+      this.tooltipHighest = parseFloat(`${eventObject.get('highest')}`).toFixed(2);
+      this.tooltipChangeText = `${changeSign}${change.toFixed(2)} (${changeSign}${parseFloat(`${changePercentValue != null ? changePercentValue : 0}`).toFixed(2)}%)`;
+      const volumeValue = eventObject.get('volume');
+      this.tooltipVolume = this.formatVolume(volumeValue != null ? volumeValue : 0);
+      this.tooltipVisible = true;
+    },
+    onChartClick(event : any) {
+      console.log('candlestick click', event);
+    }
+  }
+};
+</script>
+
+<style lang="scss" scoped>
+.u-page__item {
+  margin-bottom: 15px;
+}
+
+.u-page__item__title {
+  margin-bottom: 12px;
+  display: flex;
+}
+
+.period-tabs {
+  flex-direction: row;
+  margin-bottom: 12px;
+  padding: 6px;
+  border-radius: 10px;
+  background-color: #f1f5f9;
+}
+
+.period-tab {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-radius: 8px;
+}
+
+.period-tab--active {
+  background-color: #ffffff;
+}
+
+.period-tab__text {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.period-tab__text--active {
+  color: #0f172a;
+  font-weight: bold;
+}
+
+.tooltip-card {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background-color: #f8fafc;
+}
+
+.tooltip-card__title {
+  display: flex;
+  margin-bottom: 6px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.tooltip-card__text {
+  display: flex;
+  color: #475569;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.chart-hint {
+  display: flex;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+</style>

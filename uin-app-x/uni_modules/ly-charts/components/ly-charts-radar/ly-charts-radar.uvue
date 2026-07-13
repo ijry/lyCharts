@@ -1,0 +1,250 @@
+<template>
+  <view class="ly-charts-radar" :style="{ width: widthStyle, height: heightStyle }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchend="handleTouchEnd"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyRadarCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  clearRect(x : number, y : number, width : number, height : number) : void
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-radar',
+  props: {
+    option: {
+      type: Object,
+      default: () => ({})
+    },
+    width: {
+      type: [String, Number],
+      default: '100%'
+    },
+    height: {
+      type: [String, Number],
+      default: 300
+    }
+  },
+  data() {
+    return {
+      canvasId: `u-charts-radar-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      pointData: [] as any[]
+    }
+  },
+  computed: {
+    widthStyle() {
+      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    },
+    heightStyle() {
+      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    }
+  },
+  watch: {
+    option: {
+      handler() {
+        this.drawChart()
+      },
+      deep: true
+    }
+  },
+  methods: {
+    initCanvas() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.drawChart()
+    },
+    drawChart() {
+      const ctx = this.ctx
+      if (ctx == null || this.option == null) {
+        return
+      }
+      try {
+        ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        const optionObject = this.option as UTSJSONObject
+        const titleOption = optionObject.get('title')
+        const titleHeight = chartHelper.drawTitle(ctx, titleOption, this.canvasWidth) as number
+        const radar = optionObject.get('radar') as UTSJSONObject | null
+        const indicatorValue = radar != null ? radar.get('indicator') : null
+        const indicators = Array.isArray(indicatorValue) ? indicatorValue : [] as any[]
+        const seriesValue = optionObject.get('series')
+        const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+        if (indicators.length === 0 || series.length === 0) {
+          ctx.$callMethod('draw')
+          return
+        }
+        const centerX = this.canvasWidth / 2
+        const centerY = titleHeight + (this.canvasHeight - titleHeight) / 2
+        const radius = Math.min(this.canvasWidth, this.canvasHeight - titleHeight) * 0.33
+        const levelsValue = radar != null ? radar.get('splitNumber') : null
+        const levels = typeof levelsValue === 'number' ? levelsValue : 5
+        ctx.$callMethod('setStrokeStyle', '#e5e7eb')
+        ctx.$callMethod('setLineWidth', 1)
+        for (let level = 1; level <= levels; level++) {
+          const currentRadius = radius * level / levels
+          ctx.$callMethod('beginPath')
+          for (let i = 0; i < indicators.length; i++) {
+            const angle = i * Math.PI * 2 / indicators.length - Math.PI / 2
+            const x = centerX + Math.cos(angle) * currentRadius
+            const y = centerY + Math.sin(angle) * currentRadius
+            if (i === 0) {
+              ctx.$callMethod('moveTo', x, y)
+            } else {
+              ctx.$callMethod('lineTo', x, y)
+            }
+          }
+          ctx.$callMethod('closePath')
+          ctx.$callMethod('stroke')
+        }
+        indicators.forEach((indicator : any, i : number) => {
+          const indicatorObject = indicator as UTSJSONObject
+          const angle = i * Math.PI * 2 / indicators.length - Math.PI / 2
+          const x = centerX + Math.cos(angle) * radius
+          const y = centerY + Math.sin(angle) * radius
+          ctx.$callMethod('beginPath')
+          ctx.$callMethod('moveTo', centerX, centerY)
+          ctx.$callMethod('lineTo', x, y)
+          ctx.$callMethod('stroke')
+          ctx.$callMethod('setFillStyle', '#666')
+          ctx.$callMethod('setFont', '12px sans-serif')
+          ctx.$callMethod('setTextAlign', Math.cos(angle) > 0.2 ? 'left' : (Math.cos(angle) < -0.2 ? 'right' : 'center'))
+          ctx.$callMethod('setTextBaseline', Math.sin(angle) > 0.2 ? 'top' : (Math.sin(angle) < -0.2 ? 'bottom' : 'middle'))
+          ctx.$callMethod('fillText', `${indicatorObject.get('name')}`, centerX + Math.cos(angle) * (radius + 14), centerY + Math.sin(angle) * (radius + 14))
+        })
+        this.drawRadarSeries(series, indicators, centerX, centerY, radius)
+        ctx.$callMethod('draw')
+      } catch (error) {
+        console.error('绘制雷达图失败:', error)
+      }
+    },
+    drawRadarSeries(series : any[], indicators : any[], centerX : number, centerY : number, radius : number) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      this.pointData = []
+      series.forEach((serie : any, seriesIndex : number) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        if (data.length === 0) {
+          return
+        }
+        const firstDataItem = data[0]
+        if (typeof firstDataItem === 'number' || typeof firstDataItem === 'string') {
+          const serieNameRaw = serieObject.get('name')
+          const serieName = serieNameRaw != null ? `${serieNameRaw}` : `Series ${seriesIndex}`
+          this.drawRadarValues(data, indicators, centerX, centerY, radius, chartHelper.getColor(seriesIndex), serieName)
+          return
+        }
+        data.forEach((item : any, dataIndex : number) => {
+          const isArrayItem = Array.isArray(item)
+          if (!isArrayItem && (item == null || typeof item === 'number' || typeof item === 'string' || typeof item === 'boolean')) {
+            return
+          }
+          const itemObject = isArrayItem ? null : item as UTSJSONObject
+          const valueSource = isArrayItem ? item : (itemObject != null ? itemObject.get('value') : [] as any[])
+          const values = Array.isArray(valueSource) ? valueSource : [] as any[]
+          if (values.length === 0) {
+            return
+          }
+          const color = chartHelper.getColor(seriesIndex + dataIndex)
+          const itemNameRaw = itemObject != null ? itemObject.get('name') : null
+          const itemName = itemNameRaw != null ? `${itemNameRaw}` : `Series ${seriesIndex}`
+          this.drawRadarValues(values, indicators, centerX, centerY, radius, color, itemName)
+        })
+      })
+    },
+    drawRadarValues(values : any[], indicators : any[], centerX : number, centerY : number, radius : number, color : string, name : string) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      const points = [] as any[]
+      ctx.$callMethod('beginPath')
+      values.forEach((rawValue : any, i : number) => {
+        if (i >= indicators.length) {
+          return
+        }
+        const indicator = indicators[i] as UTSJSONObject
+        const maxValueRaw = indicator.get('max')
+        const maxValue = typeof maxValueRaw === 'number' && maxValueRaw > 0 ? maxValueRaw : 100
+        const numericValue = typeof rawValue === 'number' ? rawValue : parseFloat(`${rawValue}`)
+        const ratio = Math.max(0, Math.min(1, (isNaN(numericValue) ? 0 : numericValue) / maxValue))
+        const angle = i * Math.PI * 2 / indicators.length - Math.PI / 2
+        const x = centerX + Math.cos(angle) * radius * ratio
+        const y = centerY + Math.sin(angle) * radius * ratio
+        points.push({ x, y, value: numericValue })
+        if (points.length === 1) {
+          ctx.$callMethod('moveTo', x, y)
+        } else {
+          ctx.$callMethod('lineTo', x, y)
+        }
+      })
+      if (points.length === 0) {
+        return
+      }
+      ctx.$callMethod('closePath')
+      ctx.$callMethod('setStrokeStyle', color)
+      ctx.$callMethod('setLineWidth', 2)
+      ctx.$callMethod('stroke')
+      ctx.$callMethod('setFillStyle', color)
+      points.forEach((point : any) => {
+        const pointObject = point as UTSJSONObject
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('arc', pointObject.get('x') as number, pointObject.get('y') as number, 3, 0, 2 * Math.PI, false)
+        ctx.$callMethod('fill')
+      })
+      this.pointData.push({ points, color, name })
+    },
+    handleTouchEnd(event : any) {
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initCanvas()
+    })
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-radar {
+  position: relative;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+}
+</style>

@@ -1,0 +1,912 @@
+<template>
+  <view class="ly-charts-candlestick" :style="{ width: containerWidth, height: containerHeight }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyCandlestickCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  setFontSize(size : number) : void
+  measureText(text : string) : TextMetrics | null
+  clearRect(x : number, y : number, width : number, height : number) : void
+  setFillStyle(color : string) : void
+  fillRect(x : number, y : number, width : number, height : number) : void
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-candlestick',
+  props: {
+    option: {
+      type: Object,
+      default: () => ({})
+    },
+    height: {
+      type: [String, Number],
+      default: 420
+    },
+    width: {
+      type: [String, Number],
+      default: '100%'
+    }
+  },
+  emits: ['click', 'zoom', 'tooltipShow'],
+  data() {
+    return {
+      canvasId: `candlestick-chart-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      chartGrid: { top: 20, right: 20, bottom: 50, left: 56, width: 0, height: 0 },
+      priceGrid: null as UTSJSONObject | null,
+      volumeGrid: null as UTSJSONObject | null,
+      candleRegions: [] as any[],
+      volumeRegions: [] as any[],
+      markPointRegions: [] as any[],
+      sliderRect: null as UTSJSONObject | null,
+      zoomStart: 0,
+      zoomEnd: 100,
+      renderState: null as UTSJSONObject | null,
+      activePointer: null as UTSJSONObject | null,
+      touchInfo: {
+        startX: 0,
+        startY: 0,
+        lastX: 0,
+        lastY: 0,
+        draggingSlider: false,
+        sliderDragMode: '',
+        originZoomStart: 0,
+        originZoomEnd: 100
+      }
+    }
+  },
+  computed: {
+    containerHeight() {
+      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    },
+    containerWidth() {
+      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    }
+  },
+  watch: {
+    option: {
+      handler() {
+        this.syncZoomFromOption()
+        this.drawChart()
+      },
+      deep: true
+    }
+  },
+  methods: {
+    initCanvas() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.syncZoomFromOption()
+      this.drawChart()
+    },
+    syncZoomFromOption() {
+      const option = this.option != null ? this.option : {}
+      const optionObject = option as UTSJSONObject
+      const dataZoomValue = optionObject.get('dataZoom')
+      const dataZoom = Array.isArray(dataZoomValue) ? dataZoomValue : [] as any[]
+      const hasZoom = dataZoom.length > 0
+      const zoom = hasZoom ? dataZoom[0] : {} as any
+      const zoomObject = zoom as UTSJSONObject
+      const startValue = zoomObject.get('start')
+      const endValue = zoomObject.get('end')
+      const start = startValue != null ? parseFloat(`${startValue}`) : 0
+      const end = endValue != null ? parseFloat(`${endValue}`) : 100
+      this.zoomStart = Math.max(0, Math.min(100, start))
+      this.zoomEnd = Math.max(this.zoomStart + 1, Math.min(100, end))
+    },
+    parseLayoutValue(value : any, total : number, fallback : number) {
+      if (value == null || value === 'auto') {
+        return fallback
+      }
+      if (typeof value === 'number') {
+        return value
+      }
+      if (typeof value !== 'string') {
+        return fallback
+      }
+      if (value.indexOf('%') != -1) {
+        return total * parseFloat(value) / 100
+      }
+      if (/(rpx|upx)$/.test(value)) {
+        return parseInt(value)
+      }
+      const parsed = parseFloat(value)
+      return isNaN(parsed) ? fallback : parsed
+    },
+    parseNumber(value : any) {
+      if (value === '-' || value == null || value === '') {
+        return null
+      }
+      const numberValue = parseFloat(`${value}`)
+      return isNaN(numberValue) ? null : numberValue
+    },
+    normalizeSeriesValue(rawValue : any) {
+      if (rawValue != null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+        const rawObject = rawValue as UTSJSONObject
+        const rawItemStyle = rawObject.get('itemStyle')
+        const rawValueValue = rawObject.get('value')
+        return {
+          value: this.parseNumber(rawValueValue != null ? rawValueValue : ''),
+          itemStyle: rawItemStyle != null ? rawItemStyle : {},
+          raw: rawValue
+        }
+      }
+      return {
+        value: this.parseNumber(rawValue),
+        itemStyle: {},
+        raw: rawValue
+      }
+    },
+    applyOpacity(color : any, opacity : number = 1) {
+      if (opacity >= 1 || typeof color !== 'string') {
+        return color
+      }
+      if (color.indexOf('#') == 0) {
+        const hex = color.replace('#', '')
+        const safeHex = hex.length == 3
+          ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`
+          : hex
+        const r = parseInt(safeHex.substring(0, 2), 16)
+        const g = parseInt(safeHex.substring(2, 4), 16)
+        const b = parseInt(safeHex.substring(4, 6), 16)
+        return `rgba(${r}, ${g}, ${b}, ${opacity})`
+      }
+      if (color.indexOf('rgb(') == 0) {
+        return color.replace('rgb(', 'rgba(').replace(')', `, ${opacity})`)
+      }
+      return color
+    },
+    formatNumber(value : any, digits : number = 2) {
+      const numberValue = this.parseNumber(value)
+      if (numberValue === null) {
+        return '--'
+      }
+      return numberValue.toFixed(digits)
+    },
+    formatCompactValue(value : any, digits : number = 2) {
+      const numberValue = this.parseNumber(value)
+      if (numberValue === null) {
+        return '--'
+      }
+      const absValue = Math.abs(numberValue)
+      if (absValue >= 100000000) {
+        return `${(numberValue / 100000000).toFixed(digits)}亿`
+      }
+      if (absValue >= 10000) {
+        return `${(numberValue / 10000).toFixed(digits)}万`
+      }
+      if (absValue >= 1000) {
+        return `${(numberValue / 1000).toFixed(digits)}K`
+      }
+      return numberValue.toFixed(digits)
+    },
+    formatAxisLabel(value : number, axisLabel : any = {}, digits : number = 2, compact : boolean = false) {
+      const axisLabelObject = axisLabel as UTSJSONObject
+      const formatter = axisLabelObject.get('formatter')
+      if (typeof formatter === 'function') {
+        try {
+          return `${(formatter as (value : number) => any)(value)}`
+        } catch (error) {
+          return compact ? this.formatCompactValue(value, digits) : this.formatNumber(value, digits)
+        }
+      }
+      if (typeof formatter === 'string') {
+        return formatter.replace('{value}', compact ? this.formatCompactValue(value, digits) : this.formatNumber(value, digits))
+      }
+      return compact ? this.formatCompactValue(value, digits) : this.formatNumber(value, digits)
+    },
+    truncateText(text : any, maxLength : number = 14) {
+      const source = text == null ? '' : `${text}`
+      if (source.length <= maxLength) {
+        return source
+      }
+      return `${source.slice(0, maxLength - 1)}…`
+    },
+    measureTextWidth(text : any, fontSize : number = 12) {
+      const textValue = `${text}`
+      if (this.ctx == null) {
+        return textValue.length * fontSize * 0.6
+      }
+      this.ctx.$callMethod('setFontSize', fontSize)
+      const measuredResult = this.ctx.$callMethod('measureText', textValue) as TextMetrics | null
+      const measuredWidth = measuredResult != null ? measuredResult.width : 0
+      return measuredWidth > 0 ? measuredWidth : (textValue.length * fontSize * 0.6)
+    },
+    getAxisOption(source : any, index : number = 0) {
+      if (Array.isArray(source)) {
+        if (source[index] != null) {
+          return source[index]
+        }
+        return source[0] != null ? source[0] : {}
+      }
+      return source != null ? source : {}
+    },
+    getSeriesCollection() {
+      const option = this.option != null ? this.option : {}
+      const optionObject = option as UTSJSONObject
+      const seriesValue = optionObject.get('series')
+      const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+      let candlestickSeries = null as any
+      const lineSeries = [] as any[]
+      const barSeries = [] as any[]
+      series.forEach((serie : any) => {
+        const serieObject = serie as UTSJSONObject
+        const serieType = serieObject.get('type')
+        if (serieType === 'candlestick' && candlestickSeries == null) {
+          candlestickSeries = serie
+        } else if (serieType === 'line') {
+          lineSeries.push(serie)
+        } else if (serieType === 'bar') {
+          barSeries.push(serie)
+        }
+      })
+      return { candlestickSeries, lineSeries, barSeries, allSeries: series }
+    },
+    getLegendColors(allSeries : any[], legendData : any[]) {
+      return legendData.map((name : any, index : number) => {
+        let matched = null as any
+        for (let i = 0; i < allSeries.length; i++) {
+          const currentSeries = allSeries[i] as UTSJSONObject
+          if (currentSeries.get('name') === name) {
+            matched = allSeries[i]
+            break
+          }
+        }
+        matched = matched != null ? matched : (allSeries[index] != null ? allSeries[index] : {})
+        const matchedObject = matched as UTSJSONObject
+        const matchedType = matchedObject.get('type')
+        const matchedColor = matchedObject.get('color')
+        const matchedItemStyle = matchedObject.get('itemStyle') as UTSJSONObject | null
+        const matchedLineStyle = matchedObject.get('lineStyle') as UTSJSONObject | null
+        const itemColor = matchedItemStyle != null ? matchedItemStyle.get('color') : null
+        const lineColor = matchedLineStyle != null ? matchedLineStyle.get('color') : null
+        if (matchedType === 'candlestick') {
+          return itemColor != null && `${itemColor}` !== '' ? itemColor : '#ec0000'
+        }
+        if (matchedColor != null && `${matchedColor}` !== '') {
+          return matchedColor
+        }
+        if (lineColor != null && `${lineColor}` !== '') {
+          return lineColor
+        }
+        if (itemColor != null && `${itemColor}` !== '') {
+          return itemColor
+        }
+        return chartHelper.getColor(index + 1)
+      })
+    },
+    drawTitle() {
+      return 0
+    },
+    createBaseGrid(titleHeight : number, showSlider : boolean) {
+      const option = this.option != null ? this.option : {}
+      const optionObject = option as UTSJSONObject
+      const gridValue = optionObject.get('grid')
+      const gridOptions = Array.isArray(gridValue) ? gridValue : [gridValue != null ? gridValue : {}]
+      const firstGrid = gridOptions[0] != null ? gridOptions[0] : {}
+      const firstGridObject = firstGrid as UTSJSONObject
+      const firstGridLeft = firstGridObject.get('left')
+      const firstGridRight = firstGridObject.get('right')
+      const firstGridTop = firstGridObject.get('top')
+      const firstGridBottom = firstGridObject.get('bottom')
+      const grid = {
+        left: this.parseLayoutValue(firstGridLeft != null ? firstGridLeft : 'auto', this.canvasWidth, 56),
+        right: this.parseLayoutValue(firstGridRight != null ? firstGridRight : 'auto', this.canvasWidth, 20),
+        top: this.parseLayoutValue(firstGridTop != null ? firstGridTop : 'auto', this.canvasHeight, Math.max(20, titleHeight + 10)),
+        bottom: this.parseLayoutValue(firstGridBottom != null ? firstGridBottom : 'auto', this.canvasHeight, showSlider ? 64 : 38)
+      } as any
+      const gridObject = grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridRight = gridObject.get('right') as number
+      const gridTop = gridObject.get('top') as number
+      const gridBottom = gridObject.get('bottom') as number
+      gridObject.set('width', Math.max(0, this.canvasWidth - gridLeft - gridRight))
+      gridObject.set('height', Math.max(0, this.canvasHeight - gridTop - gridBottom))
+      return grid
+    },
+    normalizeGridOption(gridOption : any, fallbackGrid : any) {
+      const gridObject = gridOption != null ? gridOption as UTSJSONObject : ({} as UTSJSONObject)
+      const fallbackObject = fallbackGrid as UTSJSONObject
+      const fallbackLeft = fallbackObject.get('left') as number
+      const fallbackRight = fallbackObject.get('right') as number
+      const fallbackTop = fallbackObject.get('top') as number
+      const fallbackBottom = fallbackObject.get('bottom') as number
+      const fallbackHeight = fallbackObject.get('height') as number
+      const gridLeft = gridObject.get('left')
+      const gridRight = gridObject.get('right')
+      const gridTop = gridObject.get('top')
+      const gridBottom = gridObject.get('bottom')
+      const gridHeight = gridObject.get('height')
+      const left = this.parseLayoutValue(gridLeft != null ? gridLeft : 'auto', this.canvasWidth, fallbackLeft)
+      const right = this.parseLayoutValue(gridRight != null ? gridRight : 'auto', this.canvasWidth, fallbackRight)
+      const top = this.parseLayoutValue(gridTop != null ? gridTop : 'auto', this.canvasHeight, fallbackTop)
+      let bottom = this.parseLayoutValue(gridBottom != null ? gridBottom : 'auto', this.canvasHeight, fallbackBottom)
+      let height = gridHeight != null
+        ? this.parseLayoutValue(gridHeight, this.canvasHeight, fallbackHeight)
+        : Math.max(0, this.canvasHeight - top - bottom)
+
+      if (gridHeight != null && gridBottom == null) {
+        bottom = Math.max(0, this.canvasHeight - top - height)
+      }
+      if (gridBottom != null && gridHeight == null) {
+        height = Math.max(0, this.canvasHeight - top - bottom)
+      }
+
+      return {
+        left,
+        right,
+        top,
+        bottom,
+        width: Math.max(0, this.canvasWidth - left - right),
+        height: Math.max(0, height)
+      }
+    },
+    createPanelLayout(baseGrid : any, hasVolume : boolean) {
+      const option = this.option != null ? this.option : {}
+      const optionObject = option as UTSJSONObject
+      const gridValue = optionObject.get('grid')
+      const gridOptions = Array.isArray(gridValue) ? gridValue : [gridValue != null ? gridValue : {}]
+      const baseGridObject = baseGrid as UTSJSONObject
+      const baseLeft = baseGridObject.get('left') as number
+      const baseRight = baseGridObject.get('right') as number
+      const baseTop = baseGridObject.get('top') as number
+      const baseBottom = baseGridObject.get('bottom') as number
+      const baseWidth = baseGridObject.get('width') as number
+      const baseHeight = baseGridObject.get('height') as number
+
+      if (gridOptions.length > 1) {
+        const priceGrid = this.normalizeGridOption(gridOptions[0], baseGrid)
+        const priceGridObject = priceGrid as UTSJSONObject
+        const priceLeft = priceGridObject.get('left') as number
+        const priceRight = priceGridObject.get('right') as number
+        const priceTop = priceGridObject.get('top') as number
+        const priceWidth = priceGridObject.get('width') as number
+        const priceHeight = priceGridObject.get('height') as number
+        const fallbackVolume = {
+          left: priceLeft,
+          right: priceRight,
+          top: priceTop + priceHeight + 12,
+          bottom: baseBottom,
+          width: priceWidth,
+          height: Math.max(48, Math.min(100, baseHeight * 0.24))
+        }
+        const volumeSource = gridOptions[1] != null ? gridOptions[1] : {}
+        const volumeGrid = hasVolume ? this.normalizeGridOption(volumeSource, fallbackVolume) : null
+        return { priceGrid, volumeGrid }
+      }
+
+      if (hasVolume == false) {
+        return {
+          priceGrid: {
+            left: baseLeft,
+            right: baseRight,
+            top: baseTop,
+            bottom: baseBottom,
+            width: baseWidth,
+            height: baseHeight
+          },
+          volumeGrid: null
+        }
+      }
+
+      const panelGapValue = optionObject.get('panelGap')
+      const volumeHeightValue = optionObject.get('volumeHeight')
+      const panelGap = this.parseLayoutValue(panelGapValue != null ? panelGapValue : 'auto', this.canvasHeight, 12)
+      const maxVolumeHeight = Math.max(56, Math.min(120, baseHeight * 0.34))
+      const defaultVolumeHeight = Math.max(56, Math.min(maxVolumeHeight, baseHeight * 0.24))
+      const volumeHeight = Math.max(
+        56,
+        Math.min(
+          maxVolumeHeight,
+          this.parseLayoutValue(volumeHeightValue != null ? volumeHeightValue : 'auto', baseHeight, defaultVolumeHeight)
+        )
+      )
+      const priceHeight = Math.max(80, baseHeight - volumeHeight - panelGap)
+      const priceGrid = {
+        left: baseLeft,
+        right: baseRight,
+        top: baseTop,
+        bottom: this.canvasHeight - baseTop - priceHeight,
+        width: baseWidth,
+        height: priceHeight
+      }
+      const volumeGrid = {
+        left: baseLeft,
+        right: baseRight,
+        top: baseTop + priceHeight + panelGap,
+        bottom: baseBottom,
+        width: baseWidth,
+        height: Math.max(40, this.canvasHeight - (baseTop + priceHeight + panelGap) - baseBottom)
+      }
+      return { priceGrid, volumeGrid }
+    },
+    getVisibleRange(totalCount : number) {
+      if (totalCount <= 0) {
+        return { start: 0, end: -1, count: 0 }
+      }
+      const start = Math.max(0, Math.floor(totalCount * this.zoomStart / 100))
+      const end = Math.min(totalCount - 1, Math.ceil(totalCount * this.zoomEnd / 100) - 1)
+      return {
+        start,
+        end: Math.max(start, end),
+        count: Math.max(1, Math.max(start, end) - start + 1)
+      }
+    },
+    buildVisibleCandles(candlestickSeries : any, categories : any[]) {
+      const candlestickObject = candlestickSeries != null ? candlestickSeries as UTSJSONObject : null
+      const rawDataValue = candlestickObject != null ? candlestickObject.get('data') : null
+      const rawData = Array.isArray(rawDataValue) ? rawDataValue : [] as any[]
+      const categoryCount = categories.length > 0 ? categories.length : rawData.length
+      const totalCount = Math.min(categoryCount, rawData.length)
+      const visibleRange = this.getVisibleRange(totalCount)
+      const items = [] as any[]
+      const visibleRangeObject = visibleRange as UTSJSONObject
+      const visibleStart = visibleRangeObject.get('start') as number
+      const visibleEnd = visibleRangeObject.get('end') as number
+      for (let index = visibleStart; index <= visibleEnd; index++) {
+        const rawItem = rawData[index]
+        if (!Array.isArray(rawItem) || rawItem.length < 4) {
+          continue
+        }
+        items.push({
+          index,
+          localIndex: items.length,
+          category: categories[index] != null ? categories[index] : `${index}`,
+          open: parseFloat(`${rawItem[0]}`),
+          close: parseFloat(`${rawItem[1]}`),
+          low: parseFloat(`${rawItem[2]}`),
+          high: parseFloat(`${rawItem[3]}`),
+          raw: rawItem
+        })
+      }
+      return {
+        items,
+        totalCount,
+        visibleRange
+      }
+    },
+    calculatePriceRange(visibleCandles : any, lineSeries : any[], yAxisOption : any) {
+      let min = Number.MAX_VALUE
+      let max = -Number.MAX_VALUE
+      let hasData = false
+      const visibleCandlesObject = visibleCandles as UTSJSONObject
+      const visibleItemsValue = visibleCandlesObject.get('items')
+      const visibleItems = Array.isArray(visibleItemsValue) ? visibleItemsValue : [] as any[]
+      visibleItems.forEach((item : any) => {
+        const itemObject = item as UTSJSONObject
+        const itemLow = itemObject.get('low') as number
+        const itemOpen = itemObject.get('open') as number
+        const itemClose = itemObject.get('close') as number
+        const itemHigh = itemObject.get('high') as number
+        min = Math.min(min, itemLow, itemOpen, itemClose)
+        max = Math.max(max, itemHigh, itemOpen, itemClose)
+        hasData = true
+      })
+
+      lineSeries.forEach((serie : any) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        visibleItems.forEach((item : any) => {
+          const itemObject = item as UTSJSONObject
+          const itemIndex = itemObject.get('index') as number
+          const value = this.parseNumber(data[itemIndex])
+          if (value !== null) {
+            min = Math.min(min, value)
+            max = Math.max(max, value)
+            hasData = true
+          }
+        })
+      })
+
+      if (hasData == false) {
+        return { min: 0, max: 1 }
+      }
+
+      const yAxisObject = yAxisOption != null ? yAxisOption as UTSJSONObject : null
+      const yAxisMin = yAxisObject != null ? yAxisObject.get('min') : null
+      const yAxisMax = yAxisObject != null ? yAxisObject.get('max') : null
+      const hasYAxisMin = typeof yAxisMin === 'number'
+      const hasYAxisMax = typeof yAxisMax === 'number'
+      if (hasYAxisMin) {
+        min = yAxisMin as number
+      }
+      if (hasYAxisMax) {
+        max = yAxisMax as number
+      }
+      if (max === min) {
+        return { min: min - 1, max: max + 1 }
+      }
+      const padding = (max - min) * 0.05
+      return {
+        min: hasYAxisMin ? min : min - padding,
+        max: hasYAxisMax ? max : max + padding
+      }
+    },
+    calculateVolumeRange(visibleCandles : any, barSeries : any[], yAxisOption : any) {
+      let min = Number.MAX_VALUE
+      let max = -Number.MAX_VALUE
+      let hasData = false
+
+      barSeries.forEach((serie : any) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        const visibleCandlesObject = visibleCandles as UTSJSONObject
+        const visibleItemsValue = visibleCandlesObject.get('items')
+        const visibleItems = Array.isArray(visibleItemsValue) ? visibleItemsValue : [] as any[]
+        visibleItems.forEach((item : any) => {
+          const itemObject = item as UTSJSONObject
+          const itemIndex = itemObject.get('index') as number
+          const normalized = this.normalizeSeriesValue(data[itemIndex]) as UTSJSONObject
+          const value = normalized.get('value')
+          if (value !== null) {
+            const numericValue = value as number
+            min = Math.min(min, numericValue)
+            max = Math.max(max, numericValue)
+            hasData = true
+          }
+        })
+      })
+
+      if (hasData == false) {
+        return { min: 0, max: 1, baseline: 0 }
+      }
+
+      const yAxisObject = yAxisOption != null ? yAxisOption as UTSJSONObject : null
+      const yAxisMin = yAxisObject != null ? yAxisObject.get('min') : null
+      const yAxisMax = yAxisObject != null ? yAxisObject.get('max') : null
+      if (typeof yAxisMin === 'number') {
+        min = yAxisMin
+      } else if (min > 0) {
+        min = 0
+      }
+
+      if (typeof yAxisMax === 'number') {
+        max = yAxisMax
+      } else {
+        const volumeRange = max - min
+        max += (volumeRange != 0 ? volumeRange : 1) * 0.08
+      }
+      if (max === min) {
+        max = min + 1
+      }
+
+      return {
+        min,
+        max,
+        baseline: Math.min(Math.max(0, min), max)
+      }
+    },
+    getCategoryCenter(localIndex : number, count : number, grid : any) {
+      const gridObject = grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridWidth = gridObject.get('width') as number
+      return gridLeft + ((localIndex + 0.5) / Math.max(count, 1)) * gridWidth
+    },
+    valueToY(value : number, min : number, max : number, grid : any) {
+      const gridObject = grid as UTSJSONObject
+      const gridTop = gridObject.get('top') as number
+      const gridHeight = gridObject.get('height') as number
+      return gridTop + gridHeight - ((value - min) / Math.max(max - min, 1e-9)) * gridHeight
+    },
+    yToValue(y : number, min : number, max : number, grid : any) {
+      const gridObject = grid as UTSJSONObject
+      const gridTop = gridObject.get('top') as number
+      const gridHeight = gridObject.get('height') as number
+      const ratio = (gridTop + gridHeight - y) / Math.max(gridHeight, 1)
+      return min + Math.max(0, Math.min(1, ratio)) * (max - min)
+    },
+    getValueByDim(item : any, dim : string = 'close') {
+      const itemObject = item as UTSJSONObject
+      if (dim === 'open') {
+        const openValue = itemObject.get('open')
+        return openValue != null ? openValue : 0
+      }
+      if (dim === 'highest' || dim === 'high') {
+        const highValue = itemObject.get('high')
+        return highValue != null ? highValue : 0
+      }
+      if (dim === 'lowest' || dim === 'low') {
+        const lowValue = itemObject.get('low')
+        return lowValue != null ? lowValue : 0
+      }
+      const closeValue = itemObject.get('close')
+      return closeValue != null ? closeValue : 0
+    },
+    getSeriesColor(serie : any, index : number, fallback : string = '') {
+      const serieObject = serie as UTSJSONObject
+      const serieColor = serieObject.get('color')
+      const lineStyle = serieObject.get('lineStyle') as UTSJSONObject | null
+      const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+      const lineColor = lineStyle != null ? lineStyle.get('color') : null
+      const itemColor = itemStyle != null ? itemStyle.get('color') : null
+      if (serieColor != null && `${serieColor}` !== '') {
+        return serieColor
+      }
+      if (lineColor != null && `${lineColor}` !== '') {
+        return lineColor
+      }
+      if (itemColor != null && `${itemColor}` !== '') {
+        return itemColor
+      }
+      if (fallback !== '') {
+        return fallback
+      }
+      return chartHelper.getColor(index + 1)
+    },
+    drawYAxisSplitArea(ticks : any, grid : any, yAxisOption : any) {
+    },
+    drawYAxis(ticks : any, grid : any, yAxisOption : any, compact : boolean = false) {
+    },
+    drawXAxis(visibleCandles : any, grid : any, xAxisOption : any) {
+    },
+    drawCandles(candlestickSeries : any, visibleCandles : any, priceRange : any, grid : any) {
+      this.candleRegions = []
+    },
+    drawStraightSegment(points : any[]) {
+    },
+    drawSmoothSegment(points : any[]) {
+    },
+    drawOverlayLines(lineSeries : any[], visibleCandles : any, priceRange : any, grid : any) {
+    },
+    getBarColor(serie : any, normalizedItem : any, candleItem : any, seriesIndex : number) {
+      const normalizedObject = normalizedItem as UTSJSONObject
+      const normalizedItemStyle = normalizedObject.get('itemStyle') as UTSJSONObject | null
+      const normalizedColor = normalizedItemStyle != null ? normalizedItemStyle.get('color') : null
+      if (normalizedColor != null && `${normalizedColor}` !== '') {
+        return normalizedColor
+      }
+      const serieObject = serie as UTSJSONObject
+      const serieItemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+      const serieColor = serieItemStyle != null ? serieItemStyle.get('color') : null
+      if (serieColor != null && `${serieColor}` !== '') {
+        return serieColor
+      }
+      if (candleItem != null) {
+        const candleObject = candleItem as UTSJSONObject
+        const closeValue = candleObject.get('close') as number
+        const openValue = candleObject.get('open') as number
+        return closeValue >= openValue ? '#ec0000' : '#00da3c'
+      }
+      return chartHelper.getColor(seriesIndex + 1)
+    },
+    drawVolumeBars(barSeries : any[], visibleCandles : any, volumeRange : any, grid : any) {
+      this.volumeRegions = []
+    },
+    resolveMarkTarget(config : any, visibleCandles : any, priceRange : any, grid : any) : any | null {
+      return null
+    },
+    formatMarkPointLabel(config : any, value : number) {
+      return `${Math.round(value)}`
+    },
+    drawMarkPoints(candlestickSeries : any, visibleCandles : any, priceRange : any, grid : any) {
+      this.markPointRegions = []
+    },
+    drawMarkLines(candlestickSeries : any, visibleCandles : any, priceRange : any, grid : any) {
+    },
+    getSliderSelection() {
+      if (this.sliderRect == null) {
+        return null
+      }
+      const sliderObject = this.sliderRect as UTSJSONObject
+      const sliderX = sliderObject.get('x') as number
+      const sliderWidth = sliderObject.get('width') as number
+      const selectedX = sliderX + sliderWidth * this.zoomStart / 100
+      const selectedWidth = Math.max(8, sliderWidth * (this.zoomEnd - this.zoomStart) / 100)
+      return {
+        selectedX,
+        selectedWidth
+      }
+    },
+    drawDataZoomSlider(showSlider : boolean) {
+      this.sliderRect = {} as UTSJSONObject
+    },
+    isPointInRect(x : number, y : number, rect : any) {
+      if (rect == null) {
+        return false
+      }
+      const rectObject = rect as UTSJSONObject
+      const rectX = rectObject.get('x') as number
+      const rectY = rectObject.get('y') as number
+      const rectWidth = rectObject.get('width') as number
+      const rectHeight = rectObject.get('height') as number
+      return x >= rectX && x <= rectX + rectWidth && y >= rectY && y <= rectY + rectHeight
+    },
+    isPointInGrid(x : number, y : number, grid : any) {
+      if (grid == null) {
+        return false
+      }
+      const gridObject = grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridTop = gridObject.get('top') as number
+      const gridWidth = gridObject.get('width') as number
+      const gridHeight = gridObject.get('height') as number
+      return x >= gridLeft && x <= gridLeft + gridWidth && y >= gridTop && y <= gridTop + gridHeight
+    },
+    buildPointerPayload(item : any, touchX : number, touchY : number, chartState : any) {
+      const itemObject = item as UTSJSONObject
+      const itemCategory = itemObject.get('category')
+      const itemIndex = itemObject.get('index')
+      const itemOpen = itemObject.get('open')
+      const itemClose = itemObject.get('close')
+      const itemLow = itemObject.get('low')
+      const itemHigh = itemObject.get('high')
+      const itemRaw = itemObject.get('raw')
+      return {
+        componentType: 'series',
+        seriesType: 'candlestick',
+        seriesName: 'candlestick',
+        name: itemCategory != null ? itemCategory : '',
+        axisValue: itemCategory != null ? itemCategory : '',
+        axisValueLabel: itemCategory != null ? `${itemCategory}` : '',
+        dataIndex: itemIndex != null ? itemIndex : 0,
+        value: itemRaw != null ? itemRaw : [] as any[],
+        open: itemOpen != null ? itemOpen : 0,
+        close: itemClose != null ? itemClose : 0,
+        lowest: itemLow != null ? itemLow : 0,
+        highest: itemHigh != null ? itemHigh : 0,
+        color: '#ec0000',
+        previousClose: null,
+        change: 0,
+        changePercent: 0,
+        lineValues: [] as any[],
+        barValues: [] as any[],
+        volume: null,
+        x: touchX,
+        priceY: touchY,
+        pointerValue: null,
+        event: {
+          offsetX: touchX,
+          offsetY: touchY
+        },
+        withinPrice: true,
+        withinVolume: false,
+        item
+      }
+    },
+    syncActivePointer(chartState : any) {
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
+      return null
+    },
+    drawCrosshair(chartState : any) {
+    },
+    getTooltipLines(pointer : any) {
+      return [] as any[]
+    },
+    drawTooltipBox(chartState : any) {
+    },
+    drawChart() {
+      if (this.ctx == null || this.option == null) {
+        return
+      }
+      this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+      this.renderState = {} as UTSJSONObject
+      this.ctx.$callMethod('draw')
+    },
+    setZoom(start : number, end : number) {
+      const safeStart = Math.max(0, Math.min(99, start))
+      const safeEnd = Math.max(safeStart + 1, Math.min(100, end))
+      this.zoomStart = safeStart
+      this.zoomEnd = safeEnd
+      this.$emit('zoom', { start: this.zoomStart, end: this.zoomEnd })
+      this.drawChart()
+    },
+    setOption(option : any, notMerge : boolean = false) {
+      if (notMerge) {
+        this.drawChart()
+        return
+      }
+      this.drawChart()
+    },
+    resize() {
+      this.initCanvas()
+    },
+    resolveSliderDragMode(x : number) {
+      const selection = this.getSliderSelection()
+      if (selection == null) {
+        return 'move'
+      }
+      const handleArea = 12
+      const selectionObject = selection as UTSJSONObject
+      const selectedX = selectionObject.get('selectedX') as number
+      const selectedWidth = selectionObject.get('selectedWidth') as number
+      if (Math.abs(x - selectedX) <= handleArea) {
+        return 'start'
+      }
+      if (Math.abs(x - (selectedX + selectedWidth)) <= handleArea) {
+        return 'end'
+      }
+      if (x >= selectedX && x <= selectedX + selectedWidth) {
+        return 'move'
+      }
+      return 'jump'
+    },
+    applySliderDrag(x : number) {
+    },
+    buildClickPayload(pointer : any, touchX : number, touchY : number) {
+      if (pointer == null) {
+        return null
+      }
+      return {
+        componentType: 'series',
+        seriesType: 'candlestick',
+        seriesName: 'candlestick',
+        name: '',
+        dataIndex: 0,
+        value: [] as any[],
+        open: 0,
+        close: 0,
+        lowest: 0,
+        highest: 0,
+        color: '#ec0000',
+        volume: null,
+        lineValues: [] as any[],
+        barValues: [] as any[],
+        event: {
+          offsetX: touchX,
+          offsetY: touchY
+        }
+      }
+    },
+    handleTouchStart(event : any) {
+    },
+    handleTouchMove(event : any) {
+    },
+    handleTouchEnd(event : any) {
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initCanvas()
+    })
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-candlestick {
+  position: relative;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+</style>

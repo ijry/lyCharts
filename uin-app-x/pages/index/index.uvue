@@ -1,0 +1,130 @@
+<template>
+	<scroll-view class="page" scroll-y="true">
+		<view class="header">
+			<image class="logo" src="/static/lyCharts/common/logo.png" mode="aspectFit" />
+			<view class="header-info">
+				<text class="title">零云®lyCharts</text>
+				<text class="slogan">新一代跨端 uni-app 图表库</text>
+			</view>
+		</view>
+		<text class="desc">零云®lyCharts 是全面兼容 nvue / 鸿蒙 / uni-app x（uvue）的 uni-app 生态新一代图表组件，API 兼容 ECharts。</text>
+		<view class="group">
+			<text class="group-title">图表组件</text>
+			<view class="cell" v-for="(item, index) in list" :key="index" @click="openPage(item.path)">
+				<image class="cell-icon" :src="item.icon" mode="aspectFit" />
+				<text class="cell-title">{{ item.title }}</text>
+				<text class="cell-arrow">›</text>
+			</view>
+		</view>
+		<text class="footer">零云®lyCharts 2025-2099</text>
+	</scroll-view>
+</template>
+
+<script lang="uts">
+import { chartDemos, type DemoItem } from './index.config.uts'
+
+export default {
+	data() {
+		return {
+			list: chartDemos as DemoItem[]
+		}
+	},
+	methods: {
+		openPage(path: string) {
+			uni.navigateTo({
+				url: path
+			})
+		}
+	}
+}
+</script>
+
+<style>
+.page {
+	flex: 1;
+	background-color: #f6f7fb;
+}
+
+.header {
+	flex-direction: row;
+	align-items: center;
+	padding: 24px 16px 12px;
+}
+
+.logo {
+	width: 70px;
+	height: 70px;
+}
+
+.header-info {
+	margin-left: 14px;
+}
+
+.title {
+	color: #111827;
+	font-size: 25px;
+	font-weight: 700;
+}
+
+.slogan {
+	margin-top: 6px;
+	color: #6b7280;
+	font-size: 14px;
+}
+
+.desc {
+	margin: 0 16px 16px;
+	color: #4b5563;
+	font-size: 14px;
+	line-height: 22px;
+}
+
+.group {
+	margin: 0 16px 20px;
+	border-radius: 12px;
+	background-color: #ffffff;
+	overflow: hidden;
+}
+
+.group-title {
+	padding: 14px 16px;
+	color: #111827;
+	font-size: 16px;
+	font-weight: 600;
+	background-color: #f3f4f6;
+}
+
+.cell {
+	flex-direction: row;
+	align-items: center;
+	padding: 14px 16px;
+	border-bottom-width: 1px;
+	border-bottom-color: #f3f4f6;
+}
+
+.cell-icon {
+	width: 28px;
+	height: 28px;
+}
+
+.cell-title {
+	flex: 1;
+	margin-left: 12px;
+	color: #1f2937;
+	font-size: 15px;
+}
+
+.cell-arrow {
+	color: #9ca3af;
+	font-size: 24px;
+}
+
+.footer {
+	margin: 0 16px 30px;
+	padding: 12px;
+	border-radius: 8px;
+	color: #2563eb;
+	font-size: 14px;
+	background-color: #eff6ff;
+}
+</style>

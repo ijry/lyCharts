@@ -1,0 +1,533 @@
+<template>
+  <view class="ly-charts-line" :style="{ width: containerWidth, height: containerHeight }">
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
+      :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+    />
+  </view>
+</template>
+
+<script lang="uts">
+interface LyLineCanvasRef {
+  refresh() : any
+  getWidth() : number
+  getHeight() : number
+  clearRect(x : number, y : number, width : number, height : number) : void
+  setFillStyle(color : string) : void
+  fillRect(x : number, y : number, width : number, height : number) : void
+  setStrokeStyle(color : string) : void
+  setLineWidth(width : number) : void
+  setLineCap(lineCap : string) : void
+  setLineJoin(lineJoin : string) : void
+  beginPath() : void
+  closePath() : void
+  moveTo(x : number, y : number) : void
+  lineTo(x : number, y : number) : void
+  bezierCurveTo(cp1x : number, cp1y : number, cp2x : number, cp2y : number, x : number, y : number) : void
+  quadraticCurveTo(cpx : number, cpy : number, x : number, y : number) : void
+  arc(x : number, y : number, radius : number, startAngle : number, endAngle : number, anticlockwise : boolean) : void
+  fill() : void
+  stroke() : void
+  setFontSize(fontSize : number) : void
+  setTextAlign(align : string) : void
+  setTextBaseline(baseline : string) : void
+  fillText(text : string, x : number, y : number) : void
+  draw() : void
+}
+
+import chartHelper from '../../libs/uvue/chartHelper.uts'
+
+export default {
+  name: 'ly-charts-line',
+  props: {
+    option: {
+      type: Object,
+      default: () => ({})
+    },
+    height: {
+      type: [String, Number],
+      default: 400
+    },
+    width: {
+      type: [String, Number],
+      default: '100%'
+    }
+  },
+  data() {
+    return {
+      canvasId: `line-chart-${Date.now()}`,
+      ctx: null as ComponentPublicInstance | null,
+      canvasWidth: 0,
+      canvasHeight: 0,
+      grid: { top: 10, right: 20, bottom: 25, left: 50 },
+      seriesData: [] as any[],
+      touchInfo: {
+        startX: 0,
+        startY: 0
+      }
+    }
+  },
+  computed: {
+    containerHeight() {
+      return typeof this.height == 'number' ? `${this.height}px` : this.height
+    },
+    containerWidth() {
+      return typeof this.width == 'number' ? `${this.width}px` : this.width
+    }
+  },
+  watch: {
+    option: {
+      handler(newOption : any) {
+        this.drawChart(newOption)
+      },
+      deep: true
+    }
+  },
+  methods: {
+    initCanvas() {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance | null
+      if (canvasRef != null) {
+        canvasRef.$callMethod('refresh')
+      }
+    },
+    handleCanvasReady(event : any) {
+      const canvasRef = this.$refs['canvasRef'] as ComponentPublicInstance
+      this.ctx = canvasRef
+      const eventObject = event as UTSJSONObject
+      const eventWidth = eventObject.get('width')
+      const eventHeight = eventObject.get('height')
+      const refWidth = canvasRef.$callMethod('getWidth')
+      const refHeight = canvasRef.$callMethod('getHeight')
+      this.canvasWidth = typeof eventWidth == 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth == 'number' ? refWidth : 0)
+      this.canvasHeight = typeof eventHeight == 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight == 'number' ? refHeight : 0)
+      this.drawChart(this.option)
+    },
+    drawChart(option : any) {
+      const ctx = this.ctx
+      if (ctx == null || option == null) {
+        return
+      }
+      try {
+        this.grid = { top: 10, right: 20, bottom: 25, left: 50 }
+        const optionObject = option as UTSJSONObject
+        const backgroundColor = optionObject.get('backgroundColor')
+        ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        if (backgroundColor != null && `${backgroundColor}` != '') {
+          ctx.$callMethod('setFillStyle', `${backgroundColor}`)
+          ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        }
+
+        const titleOption = optionObject.get('title')
+        const titleHeight = chartHelper.drawTitle(ctx, titleOption, this.canvasWidth) as number
+        if (titleHeight > 0) {
+          const gridObject = this.grid as UTSJSONObject
+          gridObject.set('top', Math.max(gridObject.get('top') as number, titleHeight + 10))
+        }
+
+        const seriesValue = optionObject.get('series')
+        const xAxisValue = optionObject.get('xAxis')
+        const yAxisValue = optionObject.get('yAxis')
+        const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+        const xAxis = xAxisValue != null ? xAxisValue : {}
+        const yAxis = yAxisValue != null ? yAxisValue : {}
+        const xAxisData = chartHelper.processXAxisData(xAxis, series)
+        const range = chartHelper.calculateDataRange(series) as UTSJSONObject
+        const minYValue = range.get('minY')
+        const maxYValue = range.get('maxY')
+        const minY = typeof minYValue == 'number' ? minYValue : 0
+        const maxY = typeof maxYValue == 'number' ? maxYValue : 1
+        const xAxisPaddingValue = optionObject.get('xAxisPadding')
+        const xAxisPadding = typeof xAxisPaddingValue == 'number' ? xAxisPaddingValue : 0
+
+        if (optionObject.get('grid') != false) {
+          chartHelper.drawGrid(ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData.length, minY, maxY, false, xAxisPadding)
+        }
+        chartHelper.drawAxis(ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData, minY, maxY, xAxis, yAxis, 'line', xAxisPadding)
+        this.drawSeries(series, xAxisData, minY, maxY, chartHelper.adjustedYMin, chartHelper.adjustedYMax, xAxisPadding)
+        ctx.$callMethod('draw')
+      } catch (error) {
+        console.error('绘制折线图失败:', error)
+      }
+    },
+    hexToRgba(color : string, alpha : number) {
+      if (color.indexOf('#') != 0) {
+        return color.indexOf('rgb(') == 0 ? color.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`) : 'rgba(84, 112, 198, 0.3)'
+      }
+      let hex = color.replace('#', '')
+      if (hex.length == 3) {
+        hex = `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`
+      }
+      if (hex.length != 6) {
+        return 'rgba(84, 112, 198, 0.3)'
+      }
+      const r = parseInt(hex.substring(0, 2), 16)
+      const g = parseInt(hex.substring(2, 4), 16)
+      const b = parseInt(hex.substring(4, 6), 16)
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`
+    },
+    buildLinePoints(serie : any, seriesIndex : number, xAxisData : any[], actualMinY : number, actualMaxY : number, xAxisPadding : number) {
+      const points = [] as any[]
+      const serieObject = serie as UTSJSONObject
+      const dataValue = serieObject.get('data')
+      const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+      const gridObject = this.grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridRight = gridObject.get('right') as number
+      const gridTop = gridObject.get('top') as number
+      const gridBottom = gridObject.get('bottom') as number
+      const chartWidth = this.canvasWidth - gridLeft - gridRight
+      const paddedChartWidth = chartWidth - 2 * xAxisPadding
+      const chartHeight = this.canvasHeight - gridTop - gridBottom
+      const yRange = actualMaxY - actualMinY
+      const safeYRange = yRange != 0 ? yRange : 1
+      data.forEach((value : any, i : number) => {
+        const actualValue = typeof value == 'object' && value != null ? (value as UTSJSONObject).get('value') : value
+        if (typeof actualValue != 'number' || isNaN(actualValue)) {
+          return
+        }
+        const denominator = Math.max(xAxisData.length - 1, 1)
+        const x = gridLeft + xAxisPadding + (xAxisData.length > 1 ? (i / denominator) * paddedChartWidth : 0)
+        const y = gridTop + chartHeight - ((actualValue - actualMinY) / safeYRange) * chartHeight
+        points.push({
+          x,
+          y,
+          value: actualValue,
+          name: xAxisData[i] != null ? xAxisData[i] : i,
+          seriesName: serieObject.get('name') != null && `${serieObject.get('name')}` != '' ? serieObject.get('name') : `Series ${seriesIndex}`
+        })
+      })
+      return points
+    },
+    drawSeries(series : any[], xAxisData : any[], minY : number, maxY : number, adjustedYMin : number, adjustedYMax : number, xAxisPadding : number = 0) {
+      const ctx = this.ctx
+      if (ctx == null || series.length == 0) {
+        return
+      }
+      const actualMinY = adjustedYMin
+      const actualMaxY = adjustedYMax
+      const gridObject = this.grid as UTSJSONObject
+      const gridTop = gridObject.get('top') as number
+      const gridBottom = gridObject.get('bottom') as number
+      const chartHeight = this.canvasHeight - gridTop - gridBottom
+      const chartBottom = gridTop + chartHeight
+      this.seriesData = []
+
+      series.forEach((serie : any, index : number) => {
+        const serieObject = serie as UTSJSONObject
+        if (serieObject.get('type') != 'line') {
+          return
+        }
+        let color = chartHelper.getColor(index)
+        const serieColor = serieObject.get('color')
+        const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+        const itemColor = itemStyle != null ? itemStyle.get('color') : null
+        if (serieColor != null && `${serieColor}` != '') {
+          color = `${serieColor}`
+        } else if (itemColor != null && `${itemColor}` != '') {
+          color = `${itemColor}`
+        }
+        const points = this.buildLinePoints(serie, index, xAxisData, actualMinY, actualMaxY, xAxisPadding)
+        const areaStyle = serieObject.get('areaStyle')
+        const fillArea = areaStyle != null || serieObject.get('fillArea') == true
+        if (fillArea && points.length > 0) {
+          this.drawFillArea(points, color, serieObject.get('smooth') == true, chartBottom)
+        }
+      })
+
+      series.forEach((serie : any, index : number) => {
+        const serieObject = serie as UTSJSONObject
+        if (serieObject.get('type') != 'line') {
+          return
+        }
+        let color = chartHelper.getColor(index)
+        const serieColor = serieObject.get('color')
+        const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+        const lineStyle = serieObject.get('lineStyle') as UTSJSONObject | null
+        const itemColor = itemStyle != null ? itemStyle.get('color') : null
+        if (serieColor != null && `${serieColor}` != '') {
+          color = `${serieColor}`
+        } else if (itemColor != null && `${itemColor}` != '') {
+          color = `${itemColor}`
+        }
+        const points = this.buildLinePoints(serie, index, xAxisData, actualMinY, actualMaxY, xAxisPadding)
+        this.seriesData.push({
+          name: serieObject.get('name') != null && `${serieObject.get('name')}` != '' ? serieObject.get('name') : `Series ${index}`,
+          points,
+          color
+        })
+        if (points.length == 0) {
+          return
+        }
+        const lineWidthValue = lineStyle != null ? lineStyle.get('width') : null
+        const lineWidth = typeof lineWidthValue == 'number' ? lineWidthValue : 2
+        ctx.$callMethod('setLineWidth', lineWidth)
+        ctx.$callMethod('setStrokeStyle', color)
+        ctx.$callMethod('setLineJoin', 'round')
+        ctx.$callMethod('setLineCap', 'round')
+        if (serieObject.get('smooth') == true && points.length > 1) {
+          this.drawSmoothLine(points)
+        } else {
+          this.drawStraightLine(points)
+        }
+        ctx.$callMethod('stroke')
+
+        if (serieObject.get('showSymbol') != false) {
+          ctx.$callMethod('setFillStyle', color)
+          points.forEach((point : any) => {
+            const pointObject = point as UTSJSONObject
+            const x = pointObject.get('x') as number
+            const y = pointObject.get('y') as number
+            ctx.$callMethod('beginPath')
+            ctx.$callMethod('arc', x, y, 4, 0, 2 * Math.PI, false)
+            ctx.$callMethod('fill')
+            ctx.$callMethod('beginPath')
+            ctx.$callMethod('setFillStyle', '#ffffff')
+            ctx.$callMethod('arc', x, y, 2, 0, 2 * Math.PI, false)
+            ctx.$callMethod('fill')
+            ctx.$callMethod('setFillStyle', color)
+          })
+        }
+
+        const label = serieObject.get('label') as UTSJSONObject | null
+        if (label != null && label.get('show') == true) {
+          const labelColorValue = label.get('color')
+          const labelPositionValue = label.get('position')
+          this.drawLabels(points, labelColorValue != null ? `${labelColorValue}` : '#666', labelPositionValue != null ? `${labelPositionValue}` : 'top')
+        }
+      })
+    },
+    drawFillArea(points : any[], color : string, smooth : boolean, chartBottom : number) {
+      const ctx = this.ctx
+      if (ctx == null || points.length == 0) {
+        return
+      }
+      const first = points[0] as UTSJSONObject
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('moveTo', first.get('x') as number, chartBottom)
+      ctx.$callMethod('lineTo', first.get('x') as number, first.get('y') as number)
+      if (smooth && points.length > 1) {
+        this.drawSmoothPath(points)
+      } else {
+        for (let i = 1; i < points.length; i++) {
+          const point = points[i] as UTSJSONObject
+          ctx.$callMethod('lineTo', point.get('x') as number, point.get('y') as number)
+        }
+      }
+      const last = points[points.length - 1] as UTSJSONObject
+      ctx.$callMethod('lineTo', last.get('x') as number, chartBottom)
+      ctx.$callMethod('closePath')
+      ctx.$callMethod('setFillStyle', this.hexToRgba(color, 0.3))
+      ctx.$callMethod('fill')
+    },
+    drawStraightLine(points : any[]) {
+      const ctx = this.ctx
+      if (ctx == null || points.length == 0) {
+        return
+      }
+      ctx.$callMethod('beginPath')
+      points.forEach((point : any, i : number) => {
+        const pointObject = point as UTSJSONObject
+        const x = pointObject.get('x') as number
+        const y = pointObject.get('y') as number
+        if (i == 0) {
+          ctx.$callMethod('moveTo', x, y)
+        } else {
+          ctx.$callMethod('lineTo', x, y)
+        }
+      })
+    },
+    drawSmoothPath(points : any[]) {
+      const ctx = this.ctx
+      if (ctx == null || points.length < 2) {
+        return
+      }
+      for (let i = 0; i < points.length - 1; i++) {
+        const p0 = (i == 0 ? points[0] : points[i - 1]) as UTSJSONObject
+        const p1 = points[i] as UTSJSONObject
+        const p2 = points[i + 1] as UTSJSONObject
+        const p3 = (i == points.length - 2 ? points[i + 1] : points[i + 2]) as UTSJSONObject
+        const cp1x = (p1.get('x') as number) + ((p2.get('x') as number) - (p0.get('x') as number)) / 6
+        const cp1y = (p1.get('y') as number) + ((p2.get('y') as number) - (p0.get('y') as number)) / 6
+        const cp2x = (p2.get('x') as number) - ((p3.get('x') as number) - (p1.get('x') as number)) / 6
+        const cp2y = (p2.get('y') as number) - ((p3.get('y') as number) - (p1.get('y') as number)) / 6
+        ctx.$callMethod('bezierCurveTo', cp1x, cp1y, cp2x, cp2y, p2.get('x') as number, p2.get('y') as number)
+      }
+    },
+    drawSmoothLine(points : any[]) {
+      const ctx = this.ctx
+      if (ctx == null || points.length < 2) {
+        return
+      }
+      const first = points[0] as UTSJSONObject
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('moveTo', first.get('x') as number, first.get('y') as number)
+      if (points.length == 2) {
+        const second = points[1] as UTSJSONObject
+        const controlX = ((first.get('x') as number) + (second.get('x') as number)) / 2
+        const controlY = ((first.get('y') as number) + (second.get('y') as number)) / 2
+        ctx.$callMethod('quadraticCurveTo', controlX, controlY, second.get('x') as number, second.get('y') as number)
+        return
+      }
+      this.drawSmoothPath(points)
+    },
+    drawLabels(points : any[], color : string, position : string) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      points.forEach((point : any) => {
+        const pointObject = point as UTSJSONObject
+        const value = pointObject.get('value')
+        let x = pointObject.get('x') as number
+        let y = pointObject.get('y') as number
+        ctx.$callMethod('setFontSize', 10)
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('setTextAlign', 'center')
+        ctx.$callMethod('setTextBaseline', 'bottom')
+        if (position == 'bottom') {
+          y += 6
+          ctx.$callMethod('setTextBaseline', 'top')
+        } else if (position == 'left') {
+          x -= 6
+          ctx.$callMethod('setTextAlign', 'right')
+          ctx.$callMethod('setTextBaseline', 'middle')
+        } else if (position == 'right') {
+          x += 6
+          ctx.$callMethod('setTextAlign', 'left')
+          ctx.$callMethod('setTextBaseline', 'middle')
+        } else {
+          y -= 6
+        }
+        ctx.$callMethod('fillText', `${value}`, x, y)
+      })
+    },
+    handleTouchStart(event : any) {
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      const touch = touches.length > 0 ? touches[0] : null
+      if (touch != null) {
+        const touchObject = touch as UTSJSONObject
+        const touchInfoObject = this.touchInfo as UTSJSONObject
+        const touchX = touchObject.get('x')
+        const touchY = touchObject.get('y')
+        touchInfoObject.set('startX', typeof touchX == 'number' ? touchX : 0)
+        touchInfoObject.set('startY', typeof touchY == 'number' ? touchY : 0)
+      }
+    },
+    handleTouchMove(event : any) {
+    },
+    handleTouchEnd(event : any) {
+      const eventObject = event as UTSJSONObject
+      const changedTouchesValue = eventObject.get('changedTouches')
+      const changedTouches = Array.isArray(changedTouchesValue) ? changedTouchesValue : [] as any[]
+      const touch = changedTouches.length > 0 ? changedTouches[0] : null
+      if (touch == null) {
+        return
+      }
+      const touchObject = touch as UTSJSONObject
+      const touchX = touchObject.get('x')
+      const touchY = touchObject.get('y')
+      const endX = typeof touchX == 'number' ? touchX : 0
+      const endY = typeof touchY == 'number' ? touchY : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const startXValue = touchInfoObject.get('startX')
+      const startYValue = touchInfoObject.get('startY')
+      const startX = typeof startXValue == 'number' ? startXValue : 0
+      const startY = typeof startYValue == 'number' ? startYValue : 0
+      if (Math.abs(endX - startX) < 5 && Math.abs(endY - startY) < 5) {
+        this.handleChartClick(endX, endY)
+      }
+    },
+    handleChartClick(x : number, y : number) {
+      let minDistance = Number.MAX_VALUE
+      let closestPoint = null as UTSJSONObject | null
+      let closestSeries = null as UTSJSONObject | null
+      let closestX = 0
+      let closestY = 0
+      this.seriesData.forEach((series : any) => {
+        const seriesObject = series as UTSJSONObject
+        const pointsValue = seriesObject.get('points')
+        const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
+        points.forEach((point : any) => {
+          const pointObject = point as UTSJSONObject
+          const pointX = pointObject.get('x') as number
+          const pointY = pointObject.get('y') as number
+          const distance = Math.sqrt(Math.pow(pointX - x, 2) + Math.pow(pointY - y, 2))
+          if (distance < minDistance && distance < 20) {
+            minDistance = distance
+            closestPoint = pointObject
+            closestSeries = seriesObject
+            closestX = pointX
+            closestY = pointY
+          }
+        })
+      })
+      if (closestPoint != null && closestSeries != null) {
+        const closestPointObject = closestPoint as UTSJSONObject
+        const closestSeriesObject = closestSeries as UTSJSONObject
+        const seriesNameValue = closestSeriesObject.get('name')
+        const nameValue = closestPointObject.get('name')
+        const pointValue = closestPointObject.get('value')
+        const colorValue = closestSeriesObject.get('color')
+        const seriesName = seriesNameValue != null && `${seriesNameValue}` != '' ? `${seriesNameValue}` : ''
+        const name = nameValue != null && `${nameValue}` != '' ? `${nameValue}` : ''
+        const value = typeof pointValue == 'number' ? pointValue : 0
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : ''
+        this.$emit('click', {
+          componentType: 'series',
+          seriesType: 'line',
+          seriesName,
+          name,
+          value,
+          color,
+          event: {
+            offsetX: closestX,
+            offsetY: closestY
+          }
+        })
+      }
+    },
+    setOption(option : any, notMerge : boolean = false) {
+      if (notMerge) {
+        this.drawChart(option)
+        return
+      }
+      try {
+        this.drawChart(option)
+      } catch (error) {
+        console.error('合并配置失败:', error)
+        this.drawChart(option)
+      }
+    },
+    resize() {
+      this.initCanvas()
+    }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.initCanvas()
+    })
+  }
+}
+</script>
+
+<style scoped>
+.ly-charts-line {
+  position: relative;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+</style>

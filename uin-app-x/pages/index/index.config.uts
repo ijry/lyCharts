@@ -1,0 +1,48 @@
+export type DemoItem = {
+	path: string
+	icon: string
+	title: string
+}
+
+export const chartDemos = [
+	{
+		path: '/pages/componentsD/chartsLine/chartsLine',
+		icon: '/static/lyCharts/demo/chartsLine.png',
+		title: 'ChartsLine 折线图'
+	},
+	{
+		path: '/pages/componentsD/chartsBar/chartsBar',
+		icon: '/static/lyCharts/demo/chartsBar.png',
+		title: 'ChartsBar 柱状图'
+	},
+	{
+		path: '/pages/componentsD/chartsBar/chartsBar',
+		icon: '/static/lyCharts/demo/chartsBar.png',
+		title: 'ChartsBar 山峰图'
+	},
+	{
+		path: '/pages/componentsD/chartsPie/chartsPie',
+		icon: '/static/lyCharts/demo/chartsPie.png',
+		title: 'ChartsPie 饼图'
+	},
+	{
+		path: '/pages/componentsD/chartsScatter/chartsScatter',
+		icon: '/static/lyCharts/demo/chartsScatter.png',
+		title: 'ChartsScatter 散点图'
+	},
+	{
+		path: '/pages/componentsD/chartsRadar/chartsRadar',
+		icon: '/static/lyCharts/demo/chartsRadar.png',
+		title: 'ChartsRadar 雷达图'
+	},
+	{
+		path: '/pages/componentsD/chartsGauge/chartsGauge',
+		icon: '/static/lyCharts/demo/chartsGauge.png',
+		title: 'ChartsGauge 仪表盘'
+	},
+	{
+		path: '/pages/componentsD/chartsCandlestick/chartsCandlestick',
+		icon: '/static/lyCharts/demo/chartsLine.png',
+		title: 'ChartsCandlestick K线图'
+	}
+] as DemoItem[]
