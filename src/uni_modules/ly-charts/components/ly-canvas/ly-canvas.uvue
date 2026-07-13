@@ -57,6 +57,7 @@ export default {
       ctx: null as any,
       widthLocal: this.parseSize(this.width),
       heightLocal: this.parseSize(this.height),
+      dpr: 1,
       fontSize: 12,
       fontFamily: 'sans-serif',
       fontWeight: 'normal'
@@ -117,6 +118,14 @@ export default {
         }
       })
     },
+    applyTransform() {
+      if (!this.ctx) {
+        return
+      }
+      // Absolute transform so drawing coordinates stay in CSS px regardless of dpr.
+      // Using setTransform (not scale) keeps it idempotent across refresh().
+      this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    },
     applyFont() {
       if (!this.ctx) {
         return
@@ -155,13 +164,18 @@ export default {
 
       const width = this.actualWidth || canvasNode.width || 0
       const height = this.actualHeight || canvasNode.height || 0
-      const dpr = uni.getWindowInfo().pixelRatio || 1
       const node = canvasNode.node
-      node.width = width * dpr
-      node.height = height * dpr
+      // uni-app-x Android 2d canvas renders the backing store at physical pixels
+      // without stretching it to the element's CSS size. So the backing store must
+      // be CSS_px * dpr, and we map drawing coordinates back to CSS px with an
+      // absolute setTransform (not scale(), which would compound on refresh()).
+      const dpr = uni.getDeviceInfo().devicePixelRatio ?? 1
+      this.dpr = dpr > 0 ? dpr : 1
+      node.width = Math.ceil(width * this.dpr)
+      node.height = Math.ceil(height * this.dpr)
 
       this.ctx = node.getContext('2d')
-      this.ctx.scale(dpr, dpr)
+      this.applyTransform()
       this.applyFont()
       this.clearCanvas()
       this.$emit('ready', {
@@ -376,7 +390,7 @@ export default {
 }
 
 .ly-canvas__canvas {
-  display: block;
+  display: flex;
   width: 100%;
   height: 100%;
 }
