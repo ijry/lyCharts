@@ -434,7 +434,7 @@ export default {
     },
     calculatePriceRange(visibleCandles : any, lineSeries : any[], yAxisOption : any) {
       let min = Number.MAX_VALUE
-      let max = Number.MIN_VALUE
+      let max = -Number.MAX_VALUE
       let hasData = false
       visibleCandles.items.forEach((item : any) => {
         min = Math.min(min, item.low, item.open, item.close)
@@ -475,7 +475,7 @@ export default {
     },
     calculateVolumeRange(visibleCandles : any, barSeries : any[], yAxisOption : any) {
       let min = Number.MAX_VALUE
-      let max = Number.MIN_VALUE
+      let max = -Number.MAX_VALUE
       let hasData = false
 
       barSeries.forEach((serie : any) => {

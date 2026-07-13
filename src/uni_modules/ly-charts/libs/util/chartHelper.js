@@ -14,7 +14,7 @@ class ChartHelper {
    */
   calculateDataRange(series) {
     let minY = Number.MAX_VALUE;
-    let maxY = Number.MIN_VALUE;
+    let maxY = -Number.MAX_VALUE;
     if (!series || !Array.isArray(series)) {
       return { minY: 0, maxY: 1 };
     }

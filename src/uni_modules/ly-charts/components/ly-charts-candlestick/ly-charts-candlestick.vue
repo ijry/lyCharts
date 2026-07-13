@@ -423,7 +423,7 @@ export default {
     },
     calculatePriceRange(visibleCandles, lineSeries, yAxisOption) {
       let min = Number.MAX_VALUE;
-      let max = Number.MIN_VALUE;
+      let max = -Number.MAX_VALUE;
       let hasData = false;
 
       visibleCandles.items.forEach((item) => {
@@ -466,7 +466,7 @@ export default {
     },
     calculateVolumeRange(visibleCandles, barSeries, yAxisOption) {
       let min = Number.MAX_VALUE;
-      let max = Number.MIN_VALUE;
+      let max = -Number.MAX_VALUE;
       let hasData = false;
 
       barSeries.forEach((serie) => {

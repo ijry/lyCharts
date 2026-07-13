@@ -129,9 +129,9 @@ export default {
     },
     calculateScatterDataRange(series : any[]) {
       let minX = Number.MAX_VALUE
-      let maxX = Number.MIN_VALUE
+      let maxX = -Number.MAX_VALUE
       let minY = Number.MAX_VALUE
-      let maxY = Number.MIN_VALUE
+      let maxY = -Number.MAX_VALUE
       let hasData = false
 
       if (!series || !Array.isArray(series)) {

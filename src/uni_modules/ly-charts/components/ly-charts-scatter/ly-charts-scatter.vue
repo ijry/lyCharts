@@ -180,9 +180,9 @@ export default {
      */
     calculateScatterDataRange(series) {
       let minX = Number.MAX_VALUE;
-      let maxX = Number.MIN_VALUE;
+      let maxX = -Number.MAX_VALUE;
       let minY = Number.MAX_VALUE;
-      let maxY = Number.MIN_VALUE;
+      let maxY = -Number.MAX_VALUE;
       
       if (!series || !Array.isArray(series)) {
         return { minX: 0, maxX: 1, minY: 0, maxY: 1 };
