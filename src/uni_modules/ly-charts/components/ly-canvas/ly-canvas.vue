@@ -164,8 +164,13 @@ export default {
       // #ifdef APP-PLUS
       return uni.createCanvasContext(this.canvasId, this);
       // #endif
-      // #ifdef APP-PLUS-NVUE || MP || H5
+      // #ifdef APP-PLUS-NVUE
       return canvasNode ? canvasNode.getContext('2d') : null;
+      // #endif
+      // #ifdef MP || H5
+      // getNode() resolves the selector-query result ({ node, width, height }),
+      // so the real canvas element is canvasNode.node — not canvasNode itself.
+      return canvasNode && canvasNode.node ? canvasNode.node.getContext('2d') : null;
       // #endif
     },
     applyFont() {
@@ -210,19 +215,36 @@ export default {
         return false;
       }
 
-      // #ifdef MP-WEIXIN
-      const dpr = uni.getSystemInfoSync().pixelRatio || 1;
-      canvasNode.width = this.actualWidth * dpr;
-      canvasNode.height = this.actualHeight * dpr;
+      // #ifdef MP || H5
+      // The selector-query 2d canvas has a default backing store (300x150) that is
+      // stretched to the element's CSS size. To render sharp and un-clipped, size the
+      // backing store to CSS_px * dpr and map drawing coordinates back to CSS px with an
+      // absolute setTransform (not scale(), which compounds across refresh()).
+      const rawNode = canvasNode.node;
+      if (rawNode) {
+        const dpr = uni.getSystemInfoSync().pixelRatio || 1;
+        rawNode.width = Math.ceil(this.actualWidth * dpr);
+        rawNode.height = Math.ceil(this.actualHeight * dpr);
+        this.ctx = this.getCanvasContext();
+        if (!this.ctx) {
+          return false;
+        }
+        if (typeof this.ctx.setTransform === 'function') {
+          this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+      } else {
+        this.ctx = this.getCanvasContext();
+        if (!this.ctx) {
+          return false;
+        }
+      }
       // #endif
 
+      // #ifndef MP || H5
       this.ctx = this.getCanvasContext();
       if (!this.ctx) {
         return false;
       }
-
-      // #ifdef MP-WEIXIN
-      this.ctx.scale(dpr, dpr);
       // #endif
 
       this.applyFont();

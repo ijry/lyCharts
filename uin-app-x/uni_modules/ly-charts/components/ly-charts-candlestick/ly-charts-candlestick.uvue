@@ -147,7 +147,7 @@ export default {
       const parsed = parseFloat(value)
       return isNaN(parsed) ? fallback : parsed
     },
-    parseNumber(value : any) {
+    parseNumber(value : any | null) {
       if (value === '-' || value == null || value === '') {
         return null
       }
@@ -190,14 +190,14 @@ export default {
       }
       return color
     },
-    formatNumber(value : any, digits : number = 2) {
+    formatNumber(value : any | null, digits : number = 2) {
       const numberValue = this.parseNumber(value)
       if (numberValue === null) {
         return '--'
       }
       return numberValue.toFixed(digits)
     },
-    formatCompactValue(value : any, digits : number = 2) {
+    formatCompactValue(value : any | null, digits : number = 2) {
       const numberValue = this.parseNumber(value)
       if (numberValue === null) {
         return '--'
@@ -229,7 +229,7 @@ export default {
       }
       return compact ? this.formatCompactValue(value, digits) : this.formatNumber(value, digits)
     },
-    truncateText(text : any, maxLength : number = 14) {
+    truncateText(text : any | null, maxLength : number = 14) {
       const source = text == null ? '' : `${text}`
       if (source.length <= maxLength) {
         return source
@@ -246,7 +246,7 @@ export default {
       const measuredWidth = measuredResult != null ? measuredResult.width : 0
       return measuredWidth > 0 ? measuredWidth : (textValue.length * fontSize * 0.6)
     },
-    getAxisOption(source : any, index : number = 0) {
+    getAxisOption(source : any | null, index : number = 0) {
       if (Array.isArray(source)) {
         if (source[index] != null) {
           return source[index]
@@ -260,7 +260,7 @@ export default {
       const optionObject = option as UTSJSONObject
       const seriesValue = optionObject.get('series')
       const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
-      let candlestickSeries = null as any
+      let candlestickSeries : any | null = null
       const lineSeries = [] as any[]
       const barSeries = [] as any[]
       series.forEach((serie : any) => {
@@ -278,7 +278,7 @@ export default {
     },
     getLegendColors(allSeries : any[], legendData : any[]) {
       return legendData.map((name : any, index : number) => {
-        let matched = null as any
+        let matched : any | null = null
         for (let i = 0; i < allSeries.length; i++) {
           const currentSeries = allSeries[i] as UTSJSONObject
           if (currentSeries.get('name') === name) {
@@ -309,8 +309,45 @@ export default {
         return chartHelper.getColor(index + 1)
       })
     },
-    drawTitle() {
-      return 0
+    drawTitle() : number {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return 0
+      }
+      const optionObject = this.option as UTSJSONObject
+      const titleOption = optionObject.get('title')
+      if (titleOption == null) {
+        return 0
+      }
+      const titleObject = titleOption as UTSJSONObject
+      const titleText = titleObject.get('text')
+      if (titleText == null || `${titleText}` === '') {
+        return 0
+      }
+      const textStyle = titleObject.get('textStyle') as UTSJSONObject | null
+      const fontSizeValue = textStyle != null ? textStyle.get('fontSize') : null
+      const colorValue = textStyle != null ? textStyle.get('color') : null
+      const fontSize = typeof fontSizeValue === 'number' ? fontSizeValue : 16
+      const color = colorValue != null && `${colorValue}` !== '' ? `${colorValue}` : '#333'
+      const leftValue = titleObject.get('left')
+      let x = 4
+      let align = 'left'
+      if (leftValue === 'center') {
+        x = this.canvasWidth / 2
+        align = 'center'
+      } else if (leftValue === 'right') {
+        x = this.canvasWidth - 4
+        align = 'right'
+      } else if (leftValue != null && leftValue !== 'left') {
+        x = this.parseLayoutValue(leftValue, this.canvasWidth, 4)
+        align = 'left'
+      }
+      ctx.$callMethod('setFontSize', fontSize)
+      ctx.$callMethod('setFillStyle', color)
+      ctx.$callMethod('setTextAlign', align)
+      ctx.$callMethod('setTextBaseline', 'top')
+      ctx.$callMethod('fillText', `${titleText}`, x, 6)
+      return fontSize + 14
     },
     createBaseGrid(titleHeight : number, showSlider : boolean) {
       const option = this.option != null ? this.option : {}
@@ -466,7 +503,7 @@ export default {
         count: Math.max(1, Math.max(start, end) - start + 1)
       }
     },
-    buildVisibleCandles(candlestickSeries : any, categories : any[]) {
+    buildVisibleCandles(candlestickSeries : any | null, categories : any[]) {
       const candlestickObject = candlestickSeries != null ? candlestickSeries as UTSJSONObject : null
       const rawDataValue = candlestickObject != null ? candlestickObject.get('data') : null
       const rawData = Array.isArray(rawDataValue) ? rawDataValue : [] as any[]
@@ -670,19 +707,341 @@ export default {
       return chartHelper.getColor(index + 1)
     },
     drawYAxisSplitArea(ticks : any, grid : any, yAxisOption : any) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      const gridObject = grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridTop = gridObject.get('top') as number
+      const gridWidth = gridObject.get('width') as number
+      const gridHeight = gridObject.get('height') as number
+      if (gridWidth <= 0 || gridHeight <= 0) {
+        return
+      }
+      const ticksObject = ticks as UTSJSONObject
+      const tickMin = ticksObject.get('min') as number
+      const tickMax = ticksObject.get('max') as number
+      const tickStep = ticksObject.get('step') as number
+      const tickCount = ticksObject.get('tickCount') as number
+      const range = Math.max(tickMax - tickMin, 1e-9)
+
+      const yAxisObject = yAxisOption != null ? yAxisOption as UTSJSONObject : null
+      const splitArea = yAxisObject != null ? yAxisObject.get('splitArea') as UTSJSONObject | null : null
+      const showSplitArea = splitArea != null && splitArea.get('show') === true
+      if (showSplitArea) {
+        for (let i = 0; i < tickCount; i++) {
+          const valueTop = tickMin + (i + 1) * tickStep
+          const valueBottom = tickMin + i * tickStep
+          const yTop = gridTop + gridHeight - ((valueTop - tickMin) / range) * gridHeight
+          const yBottom = gridTop + gridHeight - ((valueBottom - tickMin) / range) * gridHeight
+          ctx.$callMethod('setFillStyle', i % 2 === 0 ? 'rgba(250, 250, 250, 1)' : 'rgba(240, 240, 240, 1)')
+          ctx.$callMethod('fillRect', gridLeft, yTop, gridWidth, Math.abs(yBottom - yTop))
+        }
+      }
+
+      const splitLine = yAxisObject != null ? yAxisObject.get('splitLine') as UTSJSONObject | null : null
+      const showSplitLine = splitLine == null || splitLine.get('show') !== false
+      if (showSplitLine) {
+        ctx.$callMethod('setStrokeStyle', '#eee')
+        ctx.$callMethod('setLineWidth', 1)
+        for (let i = 0; i <= tickCount; i++) {
+          const value = tickMin + i * tickStep
+          const y = gridTop + gridHeight - ((value - tickMin) / range) * gridHeight
+          ctx.$callMethod('beginPath')
+          ctx.$callMethod('moveTo', gridLeft, y)
+          ctx.$callMethod('lineTo', gridLeft + gridWidth, y)
+          ctx.$callMethod('stroke')
+        }
+      }
     },
     drawYAxis(ticks : any, grid : any, yAxisOption : any, compact : boolean = false) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      const gridObject = grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridTop = gridObject.get('top') as number
+      const gridHeight = gridObject.get('height') as number
+      if (gridHeight <= 0) {
+        return
+      }
+      const ticksObject = ticks as UTSJSONObject
+      const tickMin = ticksObject.get('min') as number
+      const tickMax = ticksObject.get('max') as number
+      const tickStep = ticksObject.get('step') as number
+      const tickCount = ticksObject.get('tickCount') as number
+      const range = Math.max(tickMax - tickMin, 1e-9)
+
+      const yAxisObject = yAxisOption != null ? yAxisOption as UTSJSONObject : null
+      const axisLabel = yAxisObject != null ? yAxisObject.get('axisLabel') : ({} as any)
+      const axisLabelObject = axisLabel != null ? axisLabel as UTSJSONObject : ({} as UTSJSONObject)
+      const showLabel = axisLabelObject.get('show') !== false
+      if (showLabel == false) {
+        return
+      }
+      const colorValue = axisLabelObject.get('color')
+      const color = colorValue != null && `${colorValue}` !== '' ? `${colorValue}` : '#999'
+      ctx.$callMethod('setFontSize', 10)
+      ctx.$callMethod('setFillStyle', color)
+      ctx.$callMethod('setTextAlign', 'right')
+      ctx.$callMethod('setTextBaseline', 'middle')
+      for (let i = 0; i <= tickCount; i++) {
+        const value = tickMin + i * tickStep
+        const y = gridTop + gridHeight - ((value - tickMin) / range) * gridHeight
+        const label = this.formatAxisLabel(value, axisLabelObject, 2, compact)
+        ctx.$callMethod('fillText', label, gridLeft - 6, y)
+      }
     },
     drawXAxis(visibleCandles : any, grid : any, xAxisOption : any) {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return
+      }
+      const visibleObject = visibleCandles as UTSJSONObject
+      const itemsValue = visibleObject.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      if (items.length === 0) {
+        return
+      }
+      const gridObject = grid as UTSJSONObject
+      const gridTop = gridObject.get('top') as number
+      const gridHeight = gridObject.get('height') as number
+      const baselineY = gridTop + gridHeight
+
+      const xAxisObject = xAxisOption != null ? xAxisOption as UTSJSONObject : null
+      const axisLine = xAxisObject != null ? xAxisObject.get('axisLine') as UTSJSONObject | null : null
+      const showAxisLine = axisLine == null || axisLine.get('show') !== false
+      const gridLeft = gridObject.get('left') as number
+      const gridWidth = gridObject.get('width') as number
+      if (showAxisLine) {
+        ctx.$callMethod('setStrokeStyle', '#ccc')
+        ctx.$callMethod('setLineWidth', 1)
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('moveTo', gridLeft, baselineY)
+        ctx.$callMethod('lineTo', gridLeft + gridWidth, baselineY)
+        ctx.$callMethod('stroke')
+      }
+
+      const axisLabel = xAxisObject != null ? xAxisObject.get('axisLabel') as UTSJSONObject | null : null
+      const showLabel = axisLabel == null || axisLabel.get('show') !== false
+      if (showLabel == false) {
+        return
+      }
+      const colorValue = axisLabel != null ? axisLabel.get('color') : null
+      const color = colorValue != null && `${colorValue}` !== '' ? `${colorValue}` : '#999'
+      const fontSize = 10
+      ctx.$callMethod('setFontSize', fontSize)
+      ctx.$callMethod('setFillStyle', color)
+      ctx.$callMethod('setTextAlign', 'center')
+      ctx.$callMethod('setTextBaseline', 'top')
+
+      const count = items.length
+      const estLabelWidth = 58
+      let maxLabels = Math.max(2, Math.floor(gridWidth / estLabelWidth))
+      if (maxLabels > count) {
+        maxLabels = count
+      }
+      const stepIndex = count > maxLabels ? Math.ceil(count / maxLabels) : 1
+      for (let i = 0; i < count; i++) {
+        if (i % stepIndex !== 0 && i !== count - 1) {
+          continue
+        }
+        const item = items[i] as UTSJSONObject
+        const localIndex = item.get('localIndex') as number
+        const category = item.get('category')
+        const cx = this.getCategoryCenter(localIndex, count, grid)
+        const label = this.truncateText(category, 12)
+        ctx.$callMethod('fillText', label, cx, baselineY + 6)
+      }
     },
-    drawCandles(candlestickSeries : any, visibleCandles : any, priceRange : any, grid : any) {
+    drawCandles(candlestickSeries : any | null, visibleCandles : any, priceRange : any, grid : any) {
       this.candleRegions = []
+      const ctx = this.ctx
+      if (ctx == null || candlestickSeries == null) {
+        return
+      }
+      const visibleObject = visibleCandles as UTSJSONObject
+      const itemsValue = visibleObject.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      if (items.length === 0) {
+        return
+      }
+      const priceRangeObject = priceRange as UTSJSONObject
+      const min = priceRangeObject.get('min') as number
+      const max = priceRangeObject.get('max') as number
+      const gridObject = grid as UTSJSONObject
+      const gridWidth = gridObject.get('width') as number
+      const count = items.length
+      const slotWidth = gridWidth / Math.max(count, 1)
+      const bodyWidth = Math.max(2, Math.min(slotWidth * 0.7, slotWidth - 2))
+
+      const serieObject = candlestickSeries as UTSJSONObject
+      const itemStyle = serieObject.get('itemStyle') as UTSJSONObject | null
+      const upColorValue = itemStyle != null ? itemStyle.get('color') : null
+      const downColorValue = itemStyle != null ? itemStyle.get('color0') : null
+      const upBorderValue = itemStyle != null ? itemStyle.get('borderColor') : null
+      const downBorderValue = itemStyle != null ? itemStyle.get('borderColor0') : null
+      const upColor = upColorValue != null && `${upColorValue}` !== '' ? `${upColorValue}` : '#ec0000'
+      const downColor = downColorValue != null && `${downColorValue}` !== '' ? `${downColorValue}` : '#00da3c'
+      const upBorder = upBorderValue != null && `${upBorderValue}` !== '' ? `${upBorderValue}` : '#8A0000'
+      const downBorder = downBorderValue != null && `${downBorderValue}` !== '' ? `${downBorderValue}` : '#008F28'
+
+      items.forEach((item : any) => {
+        const itemObject = item as UTSJSONObject
+        const localIndex = itemObject.get('localIndex') as number
+        const open = itemObject.get('open') as number
+        const close = itemObject.get('close') as number
+        const low = itemObject.get('low') as number
+        const high = itemObject.get('high') as number
+        const centerX = this.getCategoryCenter(localIndex, count, grid)
+        const isUp = close >= open
+        const fillColor = isUp ? upColor : downColor
+        const borderColor = isUp ? upBorder : downBorder
+        const openY = this.valueToY(open, min, max, grid)
+        const closeY = this.valueToY(close, min, max, grid)
+        const highY = this.valueToY(high, min, max, grid)
+        const lowY = this.valueToY(low, min, max, grid)
+        const bodyTop = Math.min(openY, closeY)
+        const bodyBottom = Math.max(openY, closeY)
+        const bodyHeight = Math.max(1, bodyBottom - bodyTop)
+        const bodyLeft = centerX - bodyWidth / 2
+
+        // wick
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('setStrokeStyle', borderColor)
+        ctx.$callMethod('setLineWidth', 1)
+        ctx.$callMethod('moveTo', centerX, highY)
+        ctx.$callMethod('lineTo', centerX, lowY)
+        ctx.$callMethod('stroke')
+
+        // body
+        ctx.$callMethod('setFillStyle', fillColor)
+        ctx.$callMethod('fillRect', bodyLeft, bodyTop, bodyWidth, bodyHeight)
+        ctx.$callMethod('setStrokeStyle', borderColor)
+        ctx.$callMethod('setLineWidth', 1)
+        ctx.$callMethod('strokeRect', bodyLeft, bodyTop, bodyWidth, bodyHeight)
+
+        this.candleRegions.push({
+          index: itemObject.get('index'),
+          localIndex,
+          centerX,
+          left: bodyLeft,
+          right: bodyLeft + bodyWidth,
+          slotLeft: centerX - slotWidth / 2,
+          slotRight: centerX + slotWidth / 2,
+          item
+        })
+      })
     },
     drawStraightSegment(points : any[]) {
+      const ctx = this.ctx
+      if (ctx == null || points.length === 0) {
+        return
+      }
+      ctx.$callMethod('beginPath')
+      points.forEach((point : any, i : number) => {
+        const pointObject = point as UTSJSONObject
+        const x = pointObject.get('x') as number
+        const y = pointObject.get('y') as number
+        if (i === 0) {
+          ctx.$callMethod('moveTo', x, y)
+        } else {
+          ctx.$callMethod('lineTo', x, y)
+        }
+      })
+      ctx.$callMethod('stroke')
     },
     drawSmoothSegment(points : any[]) {
+      const ctx = this.ctx
+      if (ctx == null || points.length === 0) {
+        return
+      }
+      if (points.length < 3) {
+        this.drawStraightSegment(points)
+        return
+      }
+      const first = points[0] as UTSJSONObject
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('moveTo', first.get('x') as number, first.get('y') as number)
+      for (let i = 0; i < points.length - 1; i++) {
+        const p0 = (i === 0 ? points[0] : points[i - 1]) as UTSJSONObject
+        const p1 = points[i] as UTSJSONObject
+        const p2 = points[i + 1] as UTSJSONObject
+        const p3 = (i === points.length - 2 ? points[i + 1] : points[i + 2]) as UTSJSONObject
+        const cp1x = (p1.get('x') as number) + ((p2.get('x') as number) - (p0.get('x') as number)) / 6
+        const cp1y = (p1.get('y') as number) + ((p2.get('y') as number) - (p0.get('y') as number)) / 6
+        const cp2x = (p2.get('x') as number) - ((p3.get('x') as number) - (p1.get('x') as number)) / 6
+        const cp2y = (p2.get('y') as number) - ((p3.get('y') as number) - (p1.get('y') as number)) / 6
+        ctx.$callMethod('bezierCurveTo', cp1x, cp1y, cp2x, cp2y, p2.get('x') as number, p2.get('y') as number)
+      }
+      ctx.$callMethod('stroke')
     },
     drawOverlayLines(lineSeries : any[], visibleCandles : any, priceRange : any, grid : any) {
+      const ctx = this.ctx
+      if (ctx == null || lineSeries.length === 0) {
+        return
+      }
+      const visibleObject = visibleCandles as UTSJSONObject
+      const itemsValue = visibleObject.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      if (items.length === 0) {
+        return
+      }
+      const priceRangeObject = priceRange as UTSJSONObject
+      const min = priceRangeObject.get('min') as number
+      const max = priceRangeObject.get('max') as number
+      const count = items.length
+
+      lineSeries.forEach((serie : any, seriesIndex : number) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        const color = `${this.getSeriesColor(serie, seriesIndex, chartHelper.getColor(seriesIndex + 1))}`
+        const lineStyle = serieObject.get('lineStyle') as UTSJSONObject | null
+        const lineWidthValue = lineStyle != null ? lineStyle.get('width') : null
+        const lineWidth = typeof lineWidthValue === 'number' ? lineWidthValue : 1
+        const opacityValue = lineStyle != null ? lineStyle.get('opacity') : null
+        const opacity = typeof opacityValue === 'number' ? opacityValue : 1
+        const smooth = serieObject.get('smooth') === true
+
+        // Split into contiguous segments, breaking on gaps ('-'/null)
+        let segment = [] as any[]
+        const segments = [] as any[][]
+        items.forEach((item : any) => {
+          const itemObject = item as UTSJSONObject
+          const dataIndex = itemObject.get('index') as number
+          const localIndex = itemObject.get('localIndex') as number
+          const value = this.parseNumber(data[dataIndex])
+          if (value === null) {
+            if (segment.length > 0) {
+              segments.push(segment)
+              segment = [] as any[]
+            }
+            return
+          }
+          segment.push({
+            x: this.getCategoryCenter(localIndex, count, grid),
+            y: this.valueToY(value as number, min, max, grid)
+          })
+        })
+        if (segment.length > 0) {
+          segments.push(segment)
+        }
+
+        ctx.$callMethod('setStrokeStyle', this.applyOpacity(color, opacity))
+        ctx.$callMethod('setLineWidth', lineWidth)
+        ctx.$callMethod('setLineJoin', 'round')
+        ctx.$callMethod('setLineCap', 'round')
+        segments.forEach((seg : any[]) => {
+          if (smooth) {
+            this.drawSmoothSegment(seg)
+          } else {
+            this.drawStraightSegment(seg)
+          }
+        })
+      })
     },
     getBarColor(serie : any, normalizedItem : any, candleItem : any, seriesIndex : number) {
       const normalizedObject = normalizedItem as UTSJSONObject
@@ -707,23 +1066,270 @@ export default {
     },
     drawVolumeBars(barSeries : any[], visibleCandles : any, volumeRange : any, grid : any) {
       this.volumeRegions = []
+      const ctx = this.ctx
+      if (ctx == null || barSeries.length === 0) {
+        return
+      }
+      const visibleCandlesObject = visibleCandles as UTSJSONObject
+      const itemsValue = visibleCandlesObject.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      if (items.length === 0) {
+        return
+      }
+      const volumeRangeObject = volumeRange as UTSJSONObject
+      const min = volumeRangeObject.get('min') as number
+      const max = volumeRangeObject.get('max') as number
+      const baselineValue = volumeRangeObject.get('baseline')
+      const baseline = typeof baselineValue === 'number' ? baselineValue : Math.min(Math.max(0, min), max)
+      const baselineY = this.valueToY(baseline, min, max, grid)
+      const count = items.length
+      const gridObject = grid as UTSJSONObject
+      const gridWidth = gridObject.get('width') as number
+      const slotWidth = gridWidth / Math.max(count, 1)
+      const barWidth = Math.max(2, slotWidth * 0.6)
+
+      barSeries.forEach((serie : any, seriesIndex : number) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        items.forEach((item : any) => {
+          const itemObject = item as UTSJSONObject
+          const dataIndex = itemObject.get('index') as number
+          const localIndex = itemObject.get('localIndex') as number
+          const normalized = this.normalizeSeriesValue(data[dataIndex]) as UTSJSONObject
+          const value = normalized.get('value')
+          if (value === null) {
+            return
+          }
+          const numericValue = value as number
+          const center = this.getCategoryCenter(localIndex, count, grid)
+          const valueY = this.valueToY(numericValue, min, max, grid)
+          const top = Math.min(valueY, baselineY)
+          const height = Math.max(1, Math.abs(baselineY - valueY))
+          const color = `${this.getBarColor(serie, normalized, item, seriesIndex)}`
+          ctx.$callMethod('setFillStyle', color)
+          ctx.$callMethod('fillRect', center - barWidth / 2, top, barWidth, height)
+          this.volumeRegions.push({
+            index: dataIndex,
+            localIndex,
+            x: center - barWidth / 2,
+            y: top,
+            width: barWidth,
+            height,
+            value: numericValue
+          })
+        })
+      })
     },
     resolveMarkTarget(config : any, visibleCandles : any, priceRange : any, grid : any) : any | null {
+      const configObject = config as UTSJSONObject
+      const visibleCandlesObject = visibleCandles as UTSJSONObject
+      const itemsValue = visibleCandlesObject.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      if (items.length === 0) {
+        return null
+      }
+      const count = items.length
+      const priceRangeObject = priceRange as UTSJSONObject
+      const min = priceRangeObject.get('min') as number
+      const max = priceRangeObject.get('max') as number
+
+      const coordValue = configObject.get('coord')
+      if (Array.isArray(coordValue)) {
+        const coord = coordValue as any[]
+        const category = coord.length > 0 ? coord[0] : null
+        let localIndex = -1
+        for (let i = 0; i < count; i++) {
+          const itemObject = items[i] as UTSJSONObject
+          if (`${itemObject.get('category')}` === `${category}`) {
+            localIndex = i
+            break
+          }
+        }
+        if (localIndex < 0) {
+          return null
+        }
+        const value = coord.length > 1 ? parseFloat(`${coord[1]}`) : 0
+        return {
+          value,
+          category,
+          localIndex,
+          x: this.getCategoryCenter(localIndex, count, grid),
+          y: this.valueToY(value, min, max, grid)
+        }
+      }
+
+      const typeValue = configObject.get('type')
+      const type = typeValue != null ? `${typeValue}` : ''
+      const dimValue = configObject.get('valueDim')
+      const dim = dimValue != null ? `${dimValue}` : 'close'
+      if (type === 'max' || type === 'min') {
+        let bestValue = type === 'max' ? -Number.MAX_VALUE : Number.MAX_VALUE
+        let bestIndex = 0
+        items.forEach((item : any, localIndex : number) => {
+          const value = parseFloat(`${this.getValueByDim(item, dim)}`)
+          if (type === 'max' ? value > bestValue : value < bestValue) {
+            bestValue = value
+            bestIndex = localIndex
+          }
+        })
+        const bestItem = items[bestIndex] as UTSJSONObject
+        return {
+          value: bestValue,
+          category: bestItem.get('category'),
+          localIndex: bestIndex,
+          x: this.getCategoryCenter(bestIndex, count, grid),
+          y: this.valueToY(bestValue, min, max, grid)
+        }
+      }
+      if (type === 'average') {
+        let sum = 0
+        items.forEach((item : any) => {
+          sum += parseFloat(`${this.getValueByDim(item, dim)}`)
+        })
+        const avg = sum / Math.max(count, 1)
+        return {
+          value: avg,
+          category: null,
+          localIndex: -1,
+          x: this.getCategoryCenter(count - 1, count, grid),
+          y: this.valueToY(avg, min, max, grid)
+        }
+      }
       return null
     },
     formatMarkPointLabel(config : any, value : number) {
+      const configObject = config as UTSJSONObject
+      const nameValue = configObject.get('name')
+      if (nameValue != null && `${nameValue}` !== '') {
+        return `${nameValue}`
+      }
       return `${Math.round(value)}`
     },
-    drawMarkPoints(candlestickSeries : any, visibleCandles : any, priceRange : any, grid : any) {
+    drawMarkPoints(candlestickSeries : any | null, visibleCandles : any, priceRange : any, grid : any) {
       this.markPointRegions = []
+      const ctx = this.ctx
+      if (ctx == null || candlestickSeries == null) {
+        return
+      }
+      const candlestickObject = candlestickSeries as UTSJSONObject
+      const markPoint = candlestickObject.get('markPoint') as UTSJSONObject | null
+      if (markPoint == null) {
+        return
+      }
+      const dataValue = markPoint.get('data')
+      const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+      if (data.length === 0) {
+        return
+      }
+      ctx.$callMethod('setFontSize', 10)
+      ctx.$callMethod('setTextAlign', 'center')
+      ctx.$callMethod('setTextBaseline', 'middle')
+      data.forEach((config : any) => {
+        const target = this.resolveMarkTarget(config, visibleCandles, priceRange, grid)
+        if (target == null) {
+          return
+        }
+        const targetObject = target as UTSJSONObject
+        const x = targetObject.get('x') as number
+        const y = targetObject.get('y') as number
+        const value = targetObject.get('value') as number
+        const configObject = config as UTSJSONObject
+        const itemStyle = configObject.get('itemStyle') as UTSJSONObject | null
+        const itemColor = itemStyle != null ? itemStyle.get('color') : null
+        const color = itemColor != null && `${itemColor}` !== '' ? `${itemColor}` : 'rgb(41,60,85)'
+        const radius = 14
+        const tipY = y - radius
+        // teardrop-style pin: circle head with a pointer toward the data point
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('arc', x, tipY, radius, 0, 2 * Math.PI, false)
+        ctx.$callMethod('fill')
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('moveTo', x - 5, tipY + radius - 3)
+        ctx.$callMethod('lineTo', x + 5, tipY + radius - 3)
+        ctx.$callMethod('lineTo', x, y)
+        ctx.$callMethod('closePath')
+        ctx.$callMethod('fill')
+        ctx.$callMethod('setFillStyle', '#ffffff')
+        ctx.$callMethod('fillText', this.formatMarkPointLabel(config, value), x, tipY)
+        this.markPointRegions.push({
+          x,
+          y: tipY,
+          radius,
+          value,
+          name: this.formatMarkPointLabel(config, value)
+        })
+      })
     },
-    drawMarkLines(candlestickSeries : any, visibleCandles : any, priceRange : any, grid : any) {
+    drawMarkLines(candlestickSeries : any | null, visibleCandles : any, priceRange : any, grid : any) {
+      const ctx = this.ctx
+      if (ctx == null || candlestickSeries == null) {
+        return
+      }
+      const candlestickObject = candlestickSeries as UTSJSONObject
+      const markLine = candlestickObject.get('markLine') as UTSJSONObject | null
+      if (markLine == null) {
+        return
+      }
+      const dataValue = markLine.get('data')
+      const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+      if (data.length === 0) {
+        return
+      }
+      const gridObject = grid as UTSJSONObject
+      const gridLeft = gridObject.get('left') as number
+      const gridWidth = gridObject.get('width') as number
+      const lineStyle = markLine.get('lineStyle') as UTSJSONObject | null
+      const lineColorValue = lineStyle != null ? lineStyle.get('color') : null
+      const defaultColor = lineColorValue != null && `${lineColorValue}` !== '' ? `${lineColorValue}` : '#888'
+      ctx.$callMethod('setLineWidth', 1)
+      ctx.$callMethod('setFontSize', 10)
+      ctx.$callMethod('setTextAlign', 'left')
+      ctx.$callMethod('setTextBaseline', 'bottom')
+      data.forEach((entry : any) => {
+        if (Array.isArray(entry)) {
+          // paired endpoints => segment between two resolved points
+          const pair = entry as any[]
+          if (pair.length < 2) {
+            return
+          }
+          const start = this.resolveMarkTarget(pair[0], visibleCandles, priceRange, grid)
+          const end = this.resolveMarkTarget(pair[1], visibleCandles, priceRange, grid)
+          if (start == null || end == null) {
+            return
+          }
+          const startObject = start as UTSJSONObject
+          const endObject = end as UTSJSONObject
+          ctx.$callMethod('setStrokeStyle', defaultColor)
+          ctx.$callMethod('beginPath')
+          ctx.$callMethod('moveTo', startObject.get('x') as number, startObject.get('y') as number)
+          ctx.$callMethod('lineTo', endObject.get('x') as number, endObject.get('y') as number)
+          ctx.$callMethod('stroke')
+          return
+        }
+        const target = this.resolveMarkTarget(entry, visibleCandles, priceRange, grid)
+        if (target == null) {
+          return
+        }
+        const targetObject = target as UTSJSONObject
+        const y = targetObject.get('y') as number
+        const value = targetObject.get('value') as number
+        ctx.$callMethod('setStrokeStyle', defaultColor)
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('moveTo', gridLeft, y)
+        ctx.$callMethod('lineTo', gridLeft + gridWidth, y)
+        ctx.$callMethod('stroke')
+        ctx.$callMethod('setFillStyle', defaultColor)
+        ctx.$callMethod('fillText', `${value.toFixed(2)}`, gridLeft + 4, y - 2)
+      })
     },
     getSliderSelection() {
-      if (this.sliderRect == null) {
+      const sliderRect = this.sliderRect
+      if (sliderRect == null) {
         return null
       }
-      const sliderObject = this.sliderRect as UTSJSONObject
+      const sliderObject = sliderRect as UTSJSONObject
       const sliderX = sliderObject.get('x') as number
       const sliderWidth = sliderObject.get('width') as number
       const selectedX = sliderX + sliderWidth * this.zoomStart / 100
@@ -734,9 +1340,56 @@ export default {
       }
     },
     drawDataZoomSlider(showSlider : boolean) {
-      this.sliderRect = {} as UTSJSONObject
+      const ctx = this.ctx
+      if (ctx == null || showSlider == false) {
+        this.sliderRect = null
+        return
+      }
+      const priceGrid = this.priceGrid
+      const left = priceGrid != null ? (priceGrid.get('left') as number) : 56
+      const width = priceGrid != null ? (priceGrid.get('width') as number) : Math.max(0, this.canvasWidth - 76)
+      const trackHeight = 18
+      const y = this.canvasHeight - trackHeight - 8
+      const sliderRect = {
+        x: left,
+        y,
+        width,
+        height: trackHeight
+      } as UTSJSONObject
+      this.sliderRect = sliderRect
+
+      // Track background
+      ctx.$callMethod('setFillStyle', '#f1f5f9')
+      ctx.$callMethod('fillRect', left, y, width, trackHeight)
+      ctx.$callMethod('setStrokeStyle', '#e2e8f0')
+      ctx.$callMethod('setLineWidth', 1)
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('moveTo', left, y)
+      ctx.$callMethod('lineTo', left + width, y)
+      ctx.$callMethod('lineTo', left + width, y + trackHeight)
+      ctx.$callMethod('lineTo', left, y + trackHeight)
+      ctx.$callMethod('lineTo', left, y)
+      ctx.$callMethod('stroke')
+
+      const selection = this.getSliderSelection()
+      if (selection == null) {
+        return
+      }
+      const selectionObject = selection as UTSJSONObject
+      const selectedX = selectionObject.get('selectedX') as number
+      const selectedWidth = selectionObject.get('selectedWidth') as number
+
+      // Selected window
+      ctx.$callMethod('setFillStyle', 'rgba(59, 130, 246, 0.18)')
+      ctx.$callMethod('fillRect', selectedX, y, selectedWidth, trackHeight)
+
+      // Handles
+      const handleWidth = 6
+      ctx.$callMethod('setFillStyle', '#3b82f6')
+      ctx.$callMethod('fillRect', selectedX - handleWidth / 2, y - 2, handleWidth, trackHeight + 4)
+      ctx.$callMethod('fillRect', selectedX + selectedWidth - handleWidth / 2, y - 2, handleWidth, trackHeight + 4)
     },
-    isPointInRect(x : number, y : number, rect : any) {
+    isPointInRect(x : number, y : number, rect : any | null) {
       if (rect == null) {
         return false
       }
@@ -800,24 +1453,523 @@ export default {
       }
     },
     syncActivePointer(chartState : any) {
-    },
-    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
-      return null
-    },
-    drawCrosshair(chartState : any) {
-    },
-    getTooltipLines(pointer : any) {
-      return [] as any[]
-    },
-    drawTooltipBox(chartState : any) {
-    },
-    drawChart() {
-      if (this.ctx == null || this.option == null) {
+      const activePointer = this.activePointer
+      if (activePointer == null) {
         return
       }
-      this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
-      this.renderState = {} as UTSJSONObject
-      this.ctx.$callMethod('draw')
+      const pointerObject = activePointer as UTSJSONObject
+      const dataIndexValue = pointerObject.get('dataIndex')
+      if (dataIndexValue == null) {
+        this.activePointer = null
+        return
+      }
+      const targetIndex = dataIndexValue as number
+      const chartStateObject = chartState as UTSJSONObject
+      const visibleCandles = chartStateObject.get('visibleCandles') as UTSJSONObject
+      const itemsValue = visibleCandles.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      let matched : any | null = null
+      items.forEach((item : any) => {
+        const itemObject = item as UTSJSONObject
+        if ((itemObject.get('index') as number) === targetIndex) {
+          matched = item
+        }
+      })
+      if (matched == null) {
+        this.activePointer = null
+        return
+      }
+      const centerX = this.getCategoryCenter((matched as UTSJSONObject).get('localIndex') as number, items.length, chartStateObject.get('priceGrid') as UTSJSONObject)
+      this.activePointer = this.buildEnrichedPointer(matched, centerX, chartState) as UTSJSONObject
+    },
+    buildEnrichedPointer(item : any, touchX : number, chartState : any) : UTSJSONObject {
+      const chartStateObject = chartState as UTSJSONObject
+      const priceGrid = chartStateObject.get('priceGrid') as UTSJSONObject
+      const priceRange = chartStateObject.get('priceRange') as UTSJSONObject
+      const min = priceRange.get('min') as number
+      const max = priceRange.get('max') as number
+      const itemObject = item as UTSJSONObject
+      const localIndex = itemObject.get('localIndex') as number
+      const dataIndex = itemObject.get('index') as number
+      const visibleCandles = chartStateObject.get('visibleCandles') as UTSJSONObject
+      const itemsValue = visibleCandles.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      const centerX = this.getCategoryCenter(localIndex, items.length, priceGrid)
+      const closeValue = itemObject.get('close') as number
+      const priceY = this.valueToY(closeValue, min, max, priceGrid)
+
+      const payload = this.buildPointerPayload(item, centerX, priceY, chartState) as UTSJSONObject
+
+      // color: up/down
+      const openValue = itemObject.get('open') as number
+      const candlestickSeries = chartStateObject.get('candlestickSeries')
+      const itemStyle = candlestickSeries != null ? (candlestickSeries as UTSJSONObject).get('itemStyle') as UTSJSONObject | null : null
+      const upItemColor = itemStyle != null ? itemStyle.get('color') : null
+      const downItemColor = itemStyle != null ? itemStyle.get('color0') : null
+      const isUp = closeValue >= openValue
+      const color = isUp
+        ? (upItemColor != null && `${upItemColor}` !== '' ? `${upItemColor}` : '#ec0000')
+        : (downItemColor != null && `${downItemColor}` !== '' ? `${downItemColor}` : '#00da3c')
+      payload.set('color', color)
+
+      // previous close / change
+      let previousClose : number | null = null
+      const rawDataValue = candlestickSeries != null ? (candlestickSeries as UTSJSONObject).get('data') : null
+      const rawData = Array.isArray(rawDataValue) ? rawDataValue : [] as any[]
+      if (dataIndex > 0 && dataIndex - 1 < rawData.length) {
+        const prevRaw = rawData[dataIndex - 1]
+        if (Array.isArray(prevRaw) && (prevRaw as any[]).length >= 2) {
+          previousClose = parseFloat(`${(prevRaw as any[])[1]}`)
+        }
+      }
+      if (previousClose != null) {
+        const change = closeValue - previousClose
+        payload.set('previousClose', previousClose)
+        payload.set('change', change)
+        payload.set('changePercent', previousClose != 0 ? (change / previousClose) * 100 : 0)
+      }
+
+      // volume
+      const barSeriesValue = chartStateObject.get('barSeries')
+      const barSeries = Array.isArray(barSeriesValue) ? barSeriesValue : [] as any[]
+      const barValues = [] as any[]
+      barSeries.forEach((serie : any) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        const normalized = this.normalizeSeriesValue(data[dataIndex]) as UTSJSONObject
+        const value = normalized.get('value')
+        barValues.push({
+          name: serieObject.get('name') != null ? serieObject.get('name') : '',
+          value
+        })
+      })
+      payload.set('barValues', barValues)
+      if (barValues.length > 0) {
+        const firstBar = barValues[0] as UTSJSONObject
+        payload.set('volume', firstBar.get('value'))
+      }
+
+      // line (MA) values
+      const lineSeriesValue = chartStateObject.get('lineSeries')
+      const lineSeries = Array.isArray(lineSeriesValue) ? lineSeriesValue : [] as any[]
+      const lineValues = [] as any[]
+      lineSeries.forEach((serie : any, seriesIndex : number) => {
+        const serieObject = serie as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        const data = Array.isArray(dataValue) ? dataValue : [] as any[]
+        lineValues.push({
+          name: serieObject.get('name') != null ? serieObject.get('name') : '',
+          value: this.parseNumber(data[dataIndex]),
+          color: `${this.getSeriesColor(serie, seriesIndex, chartHelper.getColor(seriesIndex + 1))}`
+        })
+      })
+      payload.set('lineValues', lineValues)
+
+      payload.set('x', centerX)
+      payload.set('priceY', priceY)
+      return payload
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
+      const renderState = this.renderState
+      if (renderState == null) {
+        return null
+      }
+      const chartState = renderState as UTSJSONObject
+      const visibleCandles = chartState.get('visibleCandles') as UTSJSONObject
+      const itemsValue = visibleCandles.get('items')
+      const items = Array.isArray(itemsValue) ? itemsValue : [] as any[]
+      if (items.length === 0) {
+        return null
+      }
+      // nearest candle by x using slot regions
+      let nearest : any | null = null
+      let nearestDist = Number.MAX_VALUE
+      this.candleRegions.forEach((region : any) => {
+        const regionObject = region as UTSJSONObject
+        const centerX = regionObject.get('centerX') as number
+        const dist = Math.abs(centerX - touchX)
+        if (dist < nearestDist) {
+          nearestDist = dist
+          nearest = region
+        }
+      })
+      if (nearest == null) {
+        return null
+      }
+      const nearestObject = nearest as UTSJSONObject
+      const targetIndex = nearestObject.get('index') as number
+      let matchedItem : any | null = null
+      items.forEach((item : any) => {
+        if (((item as UTSJSONObject).get('index') as number) === targetIndex) {
+          matchedItem = item
+        }
+      })
+      if (matchedItem == null) {
+        return null
+      }
+      const pointer = this.buildEnrichedPointer(matchedItem, touchX, chartState) as UTSJSONObject
+      pointer.set('event', { offsetX: touchX, offsetY: touchY })
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      return pointer
+    },
+    drawCrosshair(chartState : any) {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const chartStateObject = chartState as UTSJSONObject
+      const priceGrid = chartStateObject.get('priceGrid') as UTSJSONObject
+      const hasVolume = chartStateObject.get('hasVolume') === true
+      const volumeGridValue = chartStateObject.get('volumeGrid')
+      const volumeGrid = volumeGridValue != null ? volumeGridValue as UTSJSONObject : null
+      const x = pointerObject.get('x') as number
+      const priceGridTop = priceGrid.get('top') as number
+      const priceGridLeft = priceGrid.get('left') as number
+      const priceGridWidth = priceGrid.get('width') as number
+      let bottomY = priceGrid.get('top') as number + (priceGrid.get('height') as number)
+      if (hasVolume && volumeGrid != null) {
+        bottomY = (volumeGrid.get('top') as number) + (volumeGrid.get('height') as number)
+      }
+
+      ctx.$callMethod('setStrokeStyle', 'rgba(51, 51, 51, 0.6)')
+      ctx.$callMethod('setLineWidth', 1)
+      // vertical
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('moveTo', x, priceGridTop)
+      ctx.$callMethod('lineTo', x, bottomY)
+      ctx.$callMethod('stroke')
+      // horizontal (price panel only)
+      const priceY = pointerObject.get('priceY') as number
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('moveTo', priceGridLeft, priceY)
+      ctx.$callMethod('lineTo', priceGridLeft + priceGridWidth, priceY)
+      ctx.$callMethod('stroke')
+
+      // price tag on the y axis
+      const priceRange = chartStateObject.get('priceRange') as UTSJSONObject
+      const min = priceRange.get('min') as number
+      const max = priceRange.get('max') as number
+      const priceValue = this.yToValue(priceY, min, max, priceGrid)
+      const priceLabel = this.formatNumber(priceValue, 2)
+      const tagWidth = this.measureTextWidth(priceLabel, 11) + 10
+      const tagHeight = 16
+      ctx.$callMethod('setFillStyle', 'rgba(51, 51, 51, 0.85)')
+      ctx.$callMethod('fillRect', priceGridLeft - tagWidth, priceY - tagHeight / 2, tagWidth, tagHeight)
+      ctx.$callMethod('setFillStyle', '#ffffff')
+      ctx.$callMethod('setFontSize', 11)
+      ctx.$callMethod('setTextAlign', 'center')
+      ctx.$callMethod('setTextBaseline', 'middle')
+      ctx.$callMethod('fillText', priceLabel, priceGridLeft - tagWidth / 2, priceY)
+
+      // category tag on the x axis
+      const nameLabel = `${pointerObject.get('name') != null ? pointerObject.get('name') : ''}`
+      if (nameLabel !== '') {
+        const nameWidth = this.measureTextWidth(nameLabel, 11) + 10
+        ctx.$callMethod('setFillStyle', 'rgba(51, 51, 51, 0.85)')
+        ctx.$callMethod('fillRect', x - nameWidth / 2, bottomY, nameWidth, tagHeight)
+        ctx.$callMethod('setFillStyle', '#ffffff')
+        ctx.$callMethod('setTextAlign', 'center')
+        ctx.$callMethod('setTextBaseline', 'middle')
+        ctx.$callMethod('fillText', nameLabel, x, bottomY + tagHeight / 2)
+      }
+    },
+    getTooltipLines(pointer : any) : any[] {
+      const pointerObject = pointer as UTSJSONObject
+      const lines = [] as any[]
+      lines.push({ label: '开', value: this.formatNumber(pointerObject.get('open'), 2), color: '' })
+      lines.push({ label: '收', value: this.formatNumber(pointerObject.get('close'), 2), color: '' })
+      lines.push({ label: '低', value: this.formatNumber(pointerObject.get('lowest'), 2), color: '' })
+      lines.push({ label: '高', value: this.formatNumber(pointerObject.get('highest'), 2), color: '' })
+      const volumeValue = pointerObject.get('volume')
+      if (volumeValue != null) {
+        lines.push({ label: '量', value: this.formatCompactValue(volumeValue, 2), color: '' })
+      }
+      const lineValuesValue = pointerObject.get('lineValues')
+      const lineValues = Array.isArray(lineValuesValue) ? lineValuesValue : [] as any[]
+      lineValues.forEach((entry : any) => {
+        const entryObject = entry as UTSJSONObject
+        const value = entryObject.get('value')
+        if (value != null) {
+          lines.push({
+            label: `${entryObject.get('name')}`,
+            value: this.formatNumber(value, 2),
+            color: `${entryObject.get('color') != null ? entryObject.get('color') : ''}`
+          })
+        }
+      })
+      return lines
+    },
+    drawTooltipBox(chartState : any) {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const chartStateObject = chartState as UTSJSONObject
+      const priceGrid = chartStateObject.get('priceGrid') as UTSJSONObject
+      const lines = this.getTooltipLines(activePointer)
+      const title = `${pointerObject.get('name') != null ? pointerObject.get('name') : ''}`
+      const fontSize = 11
+      const lineHeight = 16
+      const paddingX = 8
+      const paddingY = 6
+      const titleHeight = title !== '' ? lineHeight : 0
+
+      // measure width
+      let maxWidth = this.measureTextWidth(title, fontSize)
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const text = `${lineObject.get('label')}  ${lineObject.get('value')}`
+        const w = this.measureTextWidth(text, fontSize)
+        if (w > maxWidth) {
+          maxWidth = w
+        }
+      })
+      const boxWidth = maxWidth + paddingX * 2
+      const boxHeight = titleHeight + lines.length * lineHeight + paddingY * 2
+
+      const gridLeft = priceGrid.get('left') as number
+      const gridTop = priceGrid.get('top') as number
+      const gridWidth = priceGrid.get('width') as number
+      const pointerX = pointerObject.get('x') as number
+      // place opposite the pointer to avoid covering it
+      let boxX = pointerX + 12
+      if (boxX + boxWidth > gridLeft + gridWidth) {
+        boxX = pointerX - 12 - boxWidth
+      }
+      if (boxX < gridLeft) {
+        boxX = gridLeft + 4
+      }
+      const boxY = gridTop + 4
+
+      ctx.$callMethod('setFillStyle', 'rgba(255, 255, 255, 0.95)')
+      ctx.$callMethod('fillRect', boxX, boxY, boxWidth, boxHeight)
+      ctx.$callMethod('setStrokeStyle', '#cccccc')
+      ctx.$callMethod('setLineWidth', 1)
+      ctx.$callMethod('strokeRect', boxX, boxY, boxWidth, boxHeight)
+
+      ctx.$callMethod('setFontSize', fontSize)
+      ctx.$callMethod('setTextAlign', 'left')
+      ctx.$callMethod('setTextBaseline', 'middle')
+      let textY = boxY + paddingY + lineHeight / 2
+      if (title !== '') {
+        ctx.$callMethod('setFillStyle', '#333333')
+        ctx.$callMethod('fillText', title, boxX + paddingX, textY)
+        textY += lineHeight
+      }
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const lineColor = `${lineObject.get('color')}`
+        ctx.$callMethod('setFillStyle', lineColor !== '' ? lineColor : '#666666')
+        ctx.$callMethod('fillText', `${lineObject.get('label')}  ${lineObject.get('value')}`, boxX + paddingX, textY)
+        textY += lineHeight
+      })
+    },
+    drawLegend(headerTop : number, allSeries : any[]) : number {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return 0
+      }
+      const optionObject = this.option as UTSJSONObject
+      const legendOption = optionObject.get('legend') as UTSJSONObject | null
+      if (legendOption == null) {
+        return 0
+      }
+      const legendDataValue = legendOption.get('data')
+      const legendData = Array.isArray(legendDataValue) ? legendDataValue : [] as any[]
+      if (legendData.length === 0) {
+        return 0
+      }
+      const colors = this.getLegendColors(allSeries, legendData)
+      const fontSize = 11
+      const markerWidth = 14
+      const itemGap = 16
+      const rowHeight = fontSize + 8
+      ctx.$callMethod('setFontSize', fontSize)
+      ctx.$callMethod('setTextAlign', 'left')
+      ctx.$callMethod('setTextBaseline', 'middle')
+      let x = 4
+      let y = headerTop + rowHeight / 2
+      const centerY = y
+      legendData.forEach((name : any, index : number) => {
+        const label = `${name}`
+        const textWidth = this.measureTextWidth(label, fontSize)
+        const itemWidth = markerWidth + 4 + textWidth + itemGap
+        if (x + itemWidth > this.canvasWidth - 4 && x > 4) {
+          x = 4
+          y += rowHeight
+        }
+        const color = colors[index] != null ? `${colors[index]}` : chartHelper.getColor(index)
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('fillRect', x, y - 4, markerWidth, 8)
+        ctx.$callMethod('setFillStyle', '#333')
+        ctx.$callMethod('fillText', label, x + markerWidth + 4, y)
+        x += itemWidth
+      })
+      return (y - centerY) + rowHeight
+    },
+    drawChart() {
+      const ctx = this.ctx
+      if (ctx == null || this.option == null) {
+        return
+      }
+      if (this.canvasWidth <= 0 || this.canvasHeight <= 0) {
+        return
+      }
+      let stage = 'init'
+      try {
+        const optionObject = this.option as UTSJSONObject
+        ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        const backgroundColor = optionObject.get('backgroundColor')
+        if (backgroundColor != null && `${backgroundColor}` !== '') {
+          ctx.$callMethod('setFillStyle', `${backgroundColor}`)
+          ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        }
+
+        stage = 'getSeriesCollection'
+        const collection = this.getSeriesCollection() as UTSJSONObject
+        const candlestickSeries = collection.get('candlestickSeries')
+        const lineSeriesValue = collection.get('lineSeries')
+        const barSeriesValue = collection.get('barSeries')
+        const allSeriesValue = collection.get('allSeries')
+        const lineSeries = Array.isArray(lineSeriesValue) ? lineSeriesValue : [] as any[]
+        const barSeries = Array.isArray(barSeriesValue) ? barSeriesValue : [] as any[]
+        const allSeries = Array.isArray(allSeriesValue) ? allSeriesValue : [] as any[]
+        const hasVolume = barSeries.length > 0
+
+        stage = 'drawTitle'
+        const titleHeight = this.drawTitle()
+        stage = 'drawLegend'
+        const legendHeight = this.drawLegend(titleHeight, allSeries)
+        const headerHeight = titleHeight + legendHeight
+
+        stage = 'dataZoom'
+        const dataZoomValue = optionObject.get('dataZoom')
+        const dataZoomArr = Array.isArray(dataZoomValue) ? dataZoomValue : [] as any[]
+        let showSlider = false
+        dataZoomArr.forEach((zoom : any) => {
+          const zoomObject = zoom as UTSJSONObject
+          if (zoomObject.get('type') === 'slider' && zoomObject.get('show') !== false) {
+            showSlider = true
+          }
+        })
+
+        stage = 'createBaseGrid'
+        const baseGrid = this.createBaseGrid(headerHeight, showSlider)
+        stage = 'createPanelLayout'
+        const panel = this.createPanelLayout(baseGrid, hasVolume) as UTSJSONObject
+        const priceGrid = panel.get('priceGrid') as UTSJSONObject
+        const volumeGridValue = panel.get('volumeGrid')
+        const volumeGrid = volumeGridValue != null ? volumeGridValue as UTSJSONObject : null
+        this.priceGrid = priceGrid
+        this.volumeGrid = volumeGrid
+
+        stage = 'xAxisOption'
+        const xAxisOption = this.getAxisOption(optionObject.get('xAxis'), 0)
+        const xAxisObject = xAxisOption as UTSJSONObject
+        const categoriesValue = xAxisObject.get('data')
+        const categories = Array.isArray(categoriesValue) ? categoriesValue : [] as any[]
+
+        stage = 'buildVisibleCandles'
+        const visibleCandles = this.buildVisibleCandles(candlestickSeries, categories)
+
+        stage = 'axisOptions'
+        const yAxisPrice = this.getAxisOption(optionObject.get('yAxis'), 0)
+        const yAxisVolume = this.getAxisOption(optionObject.get('yAxis'), 1)
+        stage = 'calculatePriceRange'
+        const priceRange = this.calculatePriceRange(visibleCandles, lineSeries, yAxisPrice)
+        stage = 'calculateVolumeRange'
+        const volumeRange = this.calculateVolumeRange(visibleCandles, barSeries, yAxisVolume)
+
+        stage = 'priceTicks'
+        const priceRangeObject = priceRange as UTSJSONObject
+        const priceTicks = chartHelper.calculateYAxisTicks(priceRangeObject.get('min') as number, priceRangeObject.get('max') as number, 5)
+
+        const axisGrid = hasVolume && volumeGrid != null ? volumeGrid : priceGrid
+        stage = 'drawYAxisSplitArea'
+        this.drawYAxisSplitArea(priceTicks, priceGrid, yAxisPrice)
+        stage = 'drawYAxis'
+        this.drawYAxis(priceTicks, priceGrid, yAxisPrice, false)
+        stage = 'drawXAxis'
+        this.drawXAxis(visibleCandles, axisGrid, xAxisOption)
+        stage = 'drawOverlayLines'
+        this.drawOverlayLines(lineSeries, visibleCandles, priceRange, priceGrid)
+        stage = 'drawCandles'
+        this.drawCandles(candlestickSeries, visibleCandles, priceRange, priceGrid)
+        stage = 'drawMarkLines'
+        this.drawMarkLines(candlestickSeries, visibleCandles, priceRange, priceGrid)
+        stage = 'drawMarkPoints'
+        this.drawMarkPoints(candlestickSeries, visibleCandles, priceRange, priceGrid)
+
+        if (hasVolume && volumeGrid != null) {
+          stage = 'volumeTicks'
+          const volumeRangeObject = volumeRange as UTSJSONObject
+          const volumeTicks = chartHelper.calculateYAxisTicks(volumeRangeObject.get('min') as number, volumeRangeObject.get('max') as number, 3)
+          stage = 'drawYAxis-volume'
+          this.drawYAxis(volumeTicks, volumeGrid, yAxisVolume, true)
+          stage = 'drawVolumeBars'
+          this.drawVolumeBars(barSeries, visibleCandles, volumeRange, volumeGrid)
+        }
+
+        stage = 'drawDataZoomSlider'
+        this.drawDataZoomSlider(showSlider)
+
+        stage = 'chartState'
+        const chartState = {
+          priceGrid,
+          volumeGrid,
+          priceRange,
+          volumeRange,
+          visibleCandles,
+          hasVolume,
+          lineSeries,
+          barSeries,
+          candlestickSeries
+        } as UTSJSONObject
+        this.renderState = chartState
+
+        if (this.activePointer != null) {
+          stage = 'drawCrosshair'
+          this.drawCrosshair(chartState)
+          stage = 'drawTooltipBox'
+          this.drawTooltipBox(chartState)
+        }
+
+        // --- TEMP: always-on marker proving a clean pass through the draw chain ---
+        ctx.$callMethod('setFillStyle', '#00aa00')
+        ctx.$callMethod('fillRect', this.canvasWidth - 14, 2, 12, 12)
+        // --- END TEMP ---
+
+        ctx.$callMethod('draw')
+      } catch (error) {
+        console.error('绘制K线图失败:', error)
+        // --- TEMP: surface the exception on-canvas (standard base has no console) ---
+        ctx.$callMethod('setFillStyle', '#fff2f2')
+        ctx.$callMethod('fillRect', 0, 0, Math.max(this.canvasWidth, 300), 220)
+        ctx.$callMethod('setFillStyle', '#c00000')
+        ctx.$callMethod('setFontSize', 12)
+        ctx.$callMethod('setTextAlign', 'left')
+        ctx.$callMethod('setTextBaseline', 'top')
+        ctx.$callMethod('fillText', `STAGE: ${stage}`, 6, 6)
+        // wrap the error message so long Kotlin type names are fully visible
+        const errText = `${error}`
+        const chunkSize = 42
+        let lineIndex = 0
+        for (let start = 0; start < errText.length; start += chunkSize) {
+          const chunk = errText.substring(start, Math.min(start + chunkSize, errText.length))
+          ctx.$callMethod('fillText', chunk, 6, 26 + lineIndex * 16)
+          lineIndex++
+        }
+        ctx.$callMethod('draw')
+        // --- END TEMP ---
+      }
     },
     setZoom(start : number, end : number) {
       const safeStart = Math.max(0, Math.min(99, start))
@@ -858,37 +2010,170 @@ export default {
       return 'jump'
     },
     applySliderDrag(x : number) {
+      const sliderRect = this.sliderRect
+      if (sliderRect == null) {
+        return
+      }
+      const sliderObject = sliderRect as UTSJSONObject
+      const sliderX = sliderObject.get('x') as number
+      const sliderWidth = sliderObject.get('width') as number
+      if (sliderWidth <= 0) {
+        return
+      }
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const mode = `${touchInfoObject.get('sliderDragMode')}`
+      const originStart = touchInfoObject.get('originZoomStart') as number
+      const originEnd = touchInfoObject.get('originZoomEnd') as number
+      const startX = touchInfoObject.get('startX') as number
+      // Position of the drag point on the track, as a 0..100 percentage.
+      const percentAt = Math.max(0, Math.min(100, (x - sliderX) / sliderWidth * 100))
+
+      if (mode === 'start') {
+        this.setZoom(percentAt, originEnd)
+        return
+      }
+      if (mode === 'end') {
+        this.setZoom(originStart, percentAt)
+        return
+      }
+      if (mode === 'jump') {
+        const half = (originEnd - originStart) / 2
+        this.setZoom(percentAt - half, percentAt + half)
+        return
+      }
+      // move: shift the whole window by the drag delta, keeping its width.
+      const deltaPercent = (x - startX) / sliderWidth * 100
+      const width = originEnd - originStart
+      let newStart = originStart + deltaPercent
+      let newEnd = originEnd + deltaPercent
+      if (newStart < 0) {
+        newStart = 0
+        newEnd = width
+      }
+      if (newEnd > 100) {
+        newEnd = 100
+        newStart = 100 - width
+      }
+      this.setZoom(newStart, newEnd)
     },
-    buildClickPayload(pointer : any, touchX : number, touchY : number) {
+    buildClickPayload(pointer : any | null, touchX : number, touchY : number) {
       if (pointer == null) {
         return null
       }
+      const pointerObject = pointer as UTSJSONObject
+      const nameValue = pointerObject.get('name')
+      const dataIndexValue = pointerObject.get('dataIndex')
+      const valueValue = pointerObject.get('value')
+      const openValue = pointerObject.get('open')
+      const closeValue = pointerObject.get('close')
+      const lowestValue = pointerObject.get('lowest')
+      const highestValue = pointerObject.get('highest')
+      const colorValue = pointerObject.get('color')
+      const volumeValue = pointerObject.get('volume')
+      const lineValuesValue = pointerObject.get('lineValues')
+      const barValuesValue = pointerObject.get('barValues')
       return {
         componentType: 'series',
         seriesType: 'candlestick',
         seriesName: 'candlestick',
-        name: '',
-        dataIndex: 0,
-        value: [] as any[],
-        open: 0,
-        close: 0,
-        lowest: 0,
-        highest: 0,
-        color: '#ec0000',
-        volume: null,
-        lineValues: [] as any[],
-        barValues: [] as any[],
+        name: nameValue != null ? nameValue : '',
+        dataIndex: dataIndexValue != null ? dataIndexValue : 0,
+        value: valueValue != null ? valueValue : [] as any[],
+        open: openValue != null ? openValue : 0,
+        close: closeValue != null ? closeValue : 0,
+        lowest: lowestValue != null ? lowestValue : 0,
+        highest: highestValue != null ? highestValue : 0,
+        color: colorValue != null && `${colorValue}` !== '' ? colorValue : '#ec0000',
+        volume: volumeValue != null ? volumeValue : null,
+        lineValues: Array.isArray(lineValuesValue) ? lineValuesValue : [] as any[],
+        barValues: Array.isArray(barValuesValue) ? barValuesValue : [] as any[],
         event: {
           offsetX: touchX,
           offsetY: touchY
         }
       }
     },
+    getTouchPoint(event : any) : UTSJSONObject | null {
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      if (touches.length > 0) {
+        return touches[0] as UTSJSONObject
+      }
+      const changedValue = eventObject.get('changedTouches')
+      const changed = Array.isArray(changedValue) ? changedValue : [] as any[]
+      if (changed.length > 0) {
+        return changed[0] as UTSJSONObject
+      }
+      return null
+    },
     handleTouchStart(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX === 'number' ? touchX : 0
+      const y = typeof touchY === 'number' ? touchY : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('startX', x)
+      touchInfoObject.set('startY', y)
+      touchInfoObject.set('lastX', x)
+      touchInfoObject.set('lastY', y)
+      touchInfoObject.set('draggingSlider', false)
+      touchInfoObject.set('sliderDragMode', '')
+
+      // A touch that starts on the slider begins a zoom drag; otherwise it
+      // moves the crosshair over the price/volume panels.
+      if (this.isPointInRect(x, y, this.sliderRect)) {
+        touchInfoObject.set('draggingSlider', true)
+        touchInfoObject.set('sliderDragMode', this.resolveSliderDragMode(x))
+        touchInfoObject.set('originZoomStart', this.zoomStart)
+        touchInfoObject.set('originZoomEnd', this.zoomEnd)
+        this.applySliderDrag(x)
+        return
+      }
+      this.updateActivePointer(x, y, true)
     },
     handleTouchMove(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX === 'number' ? touchX : 0
+      const y = typeof touchY === 'number' ? touchY : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('lastX', x)
+      touchInfoObject.set('lastY', y)
+      if (touchInfoObject.get('draggingSlider') === true) {
+        this.applySliderDrag(x)
+        return
+      }
+      this.updateActivePointer(x, y, true)
     },
     handleTouchEnd(event : any) {
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const wasDraggingSlider = touchInfoObject.get('draggingSlider') === true
+      touchInfoObject.set('draggingSlider', false)
+      touchInfoObject.set('sliderDragMode', '')
+      if (wasDraggingSlider) {
+        return
+      }
+      const startX = touchInfoObject.get('startX') as number
+      const startY = touchInfoObject.get('startY') as number
+      const lastX = touchInfoObject.get('lastX') as number
+      const lastY = touchInfoObject.get('lastY') as number
+      // Treat a near-stationary press as a tap and emit a click for the candle.
+      if (Math.abs(lastX - startX) < 6 && Math.abs(lastY - startY) < 6) {
+        const pointer = this.updateActivePointer(startX, startY, true)
+        const payload = this.buildClickPayload(pointer, startX, startY)
+        if (payload != null) {
+          this.$emit('click', payload)
+        }
+      }
     }
   },
   mounted() {
