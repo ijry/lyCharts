@@ -8,7 +8,9 @@
       height="100"
       :use-root-height-and-width="true"
       @ready="handleCanvasReady"
-      @touchend="tap"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
     />
   </view>
 </template>
@@ -18,6 +20,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-gauge',
+  emits: ['click', 'tooltipShow'],
   props: {
     width: {
       type: [String, Number],
@@ -40,7 +43,16 @@ export default {
       canvasHeight: 300,
       progressValue: [] as any[],
       animationTimer: null as any,
-      isInited: false
+      isInited: false,
+      gaugeMeta: null as any,
+      activePointer: null as any,
+      touchInfo: {
+        startX: 0,
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -337,7 +349,214 @@ export default {
         ctx.fillText(text, centerX + offsetX, valueY)
       }
 
+      const firstDataMeta = data[0] || { value: 0 }
+      const firstValue = values[0] != null ? values[0] : 0
+      let detailText = String(firstValue)
+      if (detail.formatter) {
+        detailText = detail.formatter.replace('{value}', Math.round(Number(firstValue)))
+      }
+      const firstItemStyle = firstDataMeta.itemStyle || {}
+      const seriesColor = firstItemStyle.color || itemStyle.color || chartHelper.getColor(0)
+      const seriesValues = data.map((item : any, index : number) => {
+        const itemStyleLocal = item.itemStyle || {}
+        return {
+          seriesName: item.name || series.name || (`value${index + 1}`),
+          value: values[index] != null ? values[index] : (item.value || 0),
+          color: itemStyleLocal.color || itemStyle.color || chartHelper.getColor(index)
+        }
+      })
+      this.gaugeMeta = {
+        centerX,
+        centerY,
+        radius,
+        values: values.slice(),
+        seriesName: series.name || firstDataMeta.name || '',
+        detailText,
+        color: seriesColor,
+        seriesValues
+      }
+
+      if (this.activePointer) {
+        this.activePointer = {
+          ...this.activePointer,
+          seriesName: this.gaugeMeta.seriesName,
+          name: this.gaugeMeta.seriesName || firstDataMeta.name || '',
+          value: firstValue,
+          color: seriesColor,
+          detail: detailText,
+          seriesValues
+        }
+        this.drawGaugeTooltipBox()
+      }
+
       ctx.draw()
+    },
+    shouldShowTooltipContent(option : any) : boolean {
+      const tooltip = option && option.tooltip ? option.tooltip : {}
+      return tooltip.show !== false && tooltip.showContent !== false
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      if (!this.ctx || typeof this.ctx.measureText !== 'function') {
+        return String(text).length * fontSize * 0.6
+      }
+      this.ctx.setFontSize(fontSize)
+      const metrics = this.ctx.measureText(String(text))
+      return (metrics && metrics.width) ? metrics.width : (String(text).length * fontSize * 0.6)
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = Number(value)
+      if (!isFinite(n)) return '--'
+      return n.toFixed(digits)
+    },
+    buildGaugePointer(x : number, y : number) : any {
+      const meta = this.gaugeMeta
+      if (!meta) return null
+      const dx = x - meta.centerX
+      const dy = y - meta.centerY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist > meta.radius * 1.05) return null
+      const value = (meta.values && meta.values.length > 0) ? meta.values[0] : 0
+      return {
+        componentType: 'series',
+        seriesType: 'gauge',
+        seriesName: meta.seriesName,
+        name: meta.seriesName,
+        dataIndex: 0,
+        value,
+        color: meta.color,
+        detail: meta.detailText,
+        seriesValues: meta.seriesValues || [],
+        x,
+        y,
+        centerX: meta.centerX,
+        centerY: meta.centerY,
+        radius: meta.radius,
+        event: {
+          offsetX: x,
+          offsetY: y
+        }
+      }
+    },
+    getGaugeTooltipLines(pointer : any) : any[] {
+      const lines = [] as any[]
+      if (pointer.seriesName) {
+        lines.push({ text: String(pointer.seriesName), color: '#f8fafc', fontSize: 12 })
+      }
+      if (pointer.seriesValues && pointer.seriesValues.length > 1) {
+        pointer.seriesValues.forEach((item : any) => {
+          lines.push({
+            text: `${item.seriesName}: ${this.formatNumber(item.value)}`,
+            color: item.color || '#e2e8f0',
+            fontSize: 11
+          })
+        })
+      } else {
+        lines.push({
+          text: `value: ${this.formatNumber(pointer.value)}`,
+          color: pointer.color || '#e2e8f0',
+          fontSize: 11
+        })
+      }
+      if (pointer.detail != null && String(pointer.detail) !== '' && String(pointer.detail) !== String(pointer.value)) {
+        lines.push({
+          text: String(pointer.detail),
+          color: '#cbd5e1',
+          fontSize: 11
+        })
+      }
+      return lines
+    },
+    drawGaugeTooltipBox() {
+      if (!this.activePointer || !this.ctx) return
+      if (!this.shouldShowTooltipContent(this.option)) return
+      const pointer = this.activePointer
+      const lines = this.getGaugeTooltipLines(pointer)
+      if (!lines.length) return
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(line.text, line.fontSize || 11))
+        boxHeight += (line.fontSize || 11) + lineGap
+      })
+      boxWidth += paddingX * 2
+      const anchorX = (pointer.event && pointer.event.offsetX != null) ? pointer.event.offsetX : (pointer.x || 0)
+      const anchorY = (pointer.event && pointer.event.offsetY != null) ? pointer.event.offsetY : (pointer.y || 0)
+      let boxX = anchorX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = anchorX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, anchorY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
+      this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+      this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
+      this.ctx.setLineWidth(tooltip.borderWidth || 1)
+      this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        this.ctx.setFontSize(line.fontSize || 11)
+        this.ctx.setFillStyle(line.color || (tooltip.textStyle && tooltip.textStyle.color) || '#e2e8f0')
+        this.ctx.setTextAlign('left')
+        this.ctx.setTextBaseline('top')
+        this.ctx.fillText(line.text, boxX + paddingX, currentY)
+        currentY += (line.fontSize || 11) + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any {
+      const meta = this.gaugeMeta
+      if (!meta || !meta.values || meta.values.length === 0) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildGaugePointer(touchX, touchY)
+      if (!pointer) {
+        return this.activePointer
+      }
+      this.touchInfo.lastX = touchX
+      this.touchInfo.lastY = touchY
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart()
+      return pointer
+    },
+    handleTouchStart(event : any) {
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.touchInfo.startX = touch.x || 0
+      this.touchInfo.startY = touch.y || 0
+      this.touchInfo.lastX = this.touchInfo.startX
+      this.touchInfo.lastY = this.touchInfo.startY
+      this.updateActivePointer(this.touchInfo.startX, this.touchInfo.startY, true)
+    },
+    handleTouchMove(event : any) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault()
+      }
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.updateActivePointer(touch.x || 0, touch.y || 0, true)
+    },
+    handleTouchEnd(event : any) {
+      const touch = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] : null
+      if (!touch) return
+      const endX = touch.x || 0
+      const endY = touch.y || 0
+      const pointer = this.updateActivePointer(endX, endY, true) || this.activePointer
+      const moved =
+        Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
+        Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
+      if (!moved && pointer) {
+        this.$emit('click', pointer)
+      }
     },
     updateChart(option : any) {
       if (!this.ctx || !option) {
@@ -375,9 +594,6 @@ export default {
         this.progressValue = [...values]
         this.drawChart()
       }
-    },
-    tap(event : any) {
-      this.$emit('click', event)
     },
     refresh() {
       this.drawChart()

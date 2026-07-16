@@ -8,7 +8,9 @@
       height="100"
       :use-root-height-and-width="true"
       @ready="handleCanvasReady"
-      @touchend="tap"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
     />
   </view>
 </template>
@@ -26,6 +28,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-gauge',
+  emits: ['click', 'tooltipShow'],
   props: {
     width: {
       type: [String, Number],
@@ -48,7 +51,16 @@ export default {
       canvasHeight: 300,
       progressValue: [] as any[],
       animationTimer: 0,
-      isInited: false
+      isInited: false,
+      gaugeMeta: null as any,
+      activePointer: null as any,
+      touchInfo: {
+        startX: 0,
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      } as UTSJSONObject,
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -101,6 +113,39 @@ export default {
       }
       this.drawGauge(ctx)
     },
+    shouldShowTooltipContent(option : any) : boolean {
+      const optionObject = (option != null ? option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const showValue = tooltip.get('show')
+      const showContentValue = tooltip.get('showContent')
+      if (showValue === false) {
+        return false
+      }
+      if (showContentValue === false) {
+        return false
+      }
+      return true
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return text.length * fontSize * 0.6
+      }
+      ctx.$callMethod('setFontSize', fontSize)
+      const metrics = ctx.$callMethod('measureText', text) as TextMetrics | null
+      if (metrics != null && typeof metrics.width == 'number') {
+        return metrics.width
+      }
+      return text.length * fontSize * 0.6
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = typeof value === 'number' ? value as number : parseFloat(`${value}`)
+      if (isNaN(n)) {
+        return '--'
+      }
+      return n.toFixed(digits)
+    },
     drawGauge(ctx : any) {
       const gaugeCtx = ctx as ComponentPublicInstance
       gaugeCtx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
@@ -112,7 +157,7 @@ export default {
       const data = Array.isArray(dataValue) ? dataValue : [] as any[]
       const firstData = data.length > 0 ? data[0] as UTSJSONObject : null
       const rawValue = firstData != null ? firstData.get('value') : 0
-      const value = typeof rawValue === 'number' ? rawValue : parseFloat(`${rawValue}`)
+      const value = typeof rawValue === 'number' ? rawValue as number : parseFloat(`${rawValue}`)
       const safeValue = isNaN(value) ? 0 : Math.max(0, Math.min(100, value))
       const centerX = this.canvasWidth / 2
       const centerY = this.canvasHeight * 0.58
@@ -120,13 +165,25 @@ export default {
       const startAngle = Math.PI * 0.75
       const endAngle = Math.PI * 2.25
       const valueAngle = startAngle + (endAngle - startAngle) * safeValue / 100
+      const seriesNameValue = firstSeries != null ? firstSeries.get('name') : null
+      const dataNameValue = firstData != null ? firstData.get('name') : null
+      const seriesName = seriesNameValue != null && `${seriesNameValue}` != '' ? `${seriesNameValue}` : (dataNameValue != null ? `${dataNameValue}` : '')
+      const detailText = `${Math.round(safeValue)}`
+      const seriesColor = chartHelper.getColor(0)
+      const seriesValues = [
+        {
+          seriesName: seriesName != '' ? seriesName : 'value1',
+          value: safeValue,
+          color: seriesColor
+        } as UTSJSONObject
+      ] as any[]
       gaugeCtx.$callMethod('beginPath')
       gaugeCtx.$callMethod('setStrokeStyle', '#e5e7eb')
       gaugeCtx.$callMethod('setLineWidth', 12)
       gaugeCtx.$callMethod('arc', centerX, centerY, radius, startAngle, endAngle, false)
       gaugeCtx.$callMethod('stroke')
       gaugeCtx.$callMethod('beginPath')
-      gaugeCtx.$callMethod('setStrokeStyle', chartHelper.getColor(0))
+      gaugeCtx.$callMethod('setStrokeStyle', seriesColor)
       gaugeCtx.$callMethod('setLineWidth', 12)
       gaugeCtx.$callMethod('arc', centerX, centerY, radius, startAngle, valueAngle, false)
       gaugeCtx.$callMethod('stroke')
@@ -134,14 +191,284 @@ export default {
       gaugeCtx.$callMethod('setFont', '22px sans-serif')
       gaugeCtx.$callMethod('setTextAlign', 'center')
       gaugeCtx.$callMethod('setTextBaseline', 'middle')
-      gaugeCtx.$callMethod('fillText', `${Math.round(safeValue)}`, centerX, centerY)
-      const name = firstData != null ? firstData.get('name') : null
-      if (name != null && `${name}` !== '') {
+      gaugeCtx.$callMethod('fillText', detailText, centerX, centerY)
+      if (dataNameValue != null && `${dataNameValue}` != '') {
         gaugeCtx.$callMethod('setFillStyle', '#6b7280')
         gaugeCtx.$callMethod('setFont', '12px sans-serif')
-        gaugeCtx.$callMethod('fillText', `${name}`, centerX, centerY + 26)
+        gaugeCtx.$callMethod('fillText', `${dataNameValue}`, centerX, centerY + 26)
+      }
+
+      this.gaugeMeta = {
+        centerX,
+        centerY,
+        radius,
+        values: [safeValue] as any[],
+        seriesName,
+        detailText,
+        color: seriesColor,
+        seriesValues
+      } as UTSJSONObject
+
+      if (this.activePointer != null) {
+        const activePointerObject = this.activePointer as UTSJSONObject
+        activePointerObject.set('seriesName', seriesName)
+        activePointerObject.set('name', seriesName)
+        activePointerObject.set('value', safeValue)
+        activePointerObject.set('color', seriesColor)
+        activePointerObject.set('detail', detailText)
+        activePointerObject.set('seriesValues', seriesValues)
+        this.drawGaugeTooltipBox()
       }
       gaugeCtx.$callMethod('draw')
+    },
+    buildGaugePointer(x : number, y : number) : any | null {
+      if (this.gaugeMeta == null) {
+        return null
+      }
+      const meta = this.gaugeMeta as UTSJSONObject
+      const centerXValue = meta.get('centerX')
+      const centerYValue = meta.get('centerY')
+      const radiusValue = meta.get('radius')
+      const centerX = typeof centerXValue == 'number' ? centerXValue as number : 0
+      const centerY = typeof centerYValue == 'number' ? centerYValue as number : 0
+      const radius = typeof radiusValue == 'number' ? radiusValue as number : 0
+      const dx = x - centerX
+      const dy = y - centerY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist > radius * 1.05) {
+        return null
+      }
+      const valuesValue = meta.get('values')
+      const values = Array.isArray(valuesValue) ? valuesValue : [] as any[]
+      const firstValue = values.length > 0 ? values[0] : 0
+      const seriesNameValue = meta.get('seriesName')
+      const colorValue = meta.get('color')
+      const detailValue = meta.get('detailText')
+      const seriesValuesValue = meta.get('seriesValues')
+      return {
+        componentType: 'series',
+        seriesType: 'gauge',
+        seriesName: seriesNameValue != null ? `${seriesNameValue}` : '',
+        name: seriesNameValue != null ? `${seriesNameValue}` : '',
+        dataIndex: 0,
+        value: firstValue,
+        color: colorValue != null ? `${colorValue}` : chartHelper.getColor(0),
+        detail: detailValue != null ? `${detailValue}` : '',
+        seriesValues: Array.isArray(seriesValuesValue) ? seriesValuesValue : [] as any[],
+        x,
+        y,
+        centerX,
+        centerY,
+        radius,
+        event: {
+          offsetX: x,
+          offsetY: y
+        } as UTSJSONObject
+      } as UTSJSONObject
+    },
+    getGaugeTooltipLines(pointer : any) : any[] {
+      const pointerObject = pointer as UTSJSONObject
+      const lines = [] as any[]
+      const seriesNameValue = pointerObject.get('seriesName')
+      if (seriesNameValue != null && `${seriesNameValue}` != '') {
+        lines.push({
+          text: `${seriesNameValue}`,
+          color: '#f8fafc',
+          fontSize: 12
+        } as UTSJSONObject)
+      }
+      const seriesValuesValue = pointerObject.get('seriesValues')
+      const seriesValues = Array.isArray(seriesValuesValue) ? seriesValuesValue : [] as any[]
+      if (seriesValues.length > 1) {
+        seriesValues.forEach((item : any) => {
+          const itemObject = item as UTSJSONObject
+          const nameValue = itemObject.get('seriesName')
+          const valueValue = itemObject.get('value')
+          const colorValue = itemObject.get('color')
+          lines.push({
+            text: `${nameValue != null ? nameValue : ''}: ${this.formatNumber(valueValue)}`,
+            color: colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#e2e8f0',
+            fontSize: 11
+          } as UTSJSONObject)
+        })
+      } else {
+        const valueValue = pointerObject.get('value')
+        const colorValue = pointerObject.get('color')
+        lines.push({
+          text: `value: ${this.formatNumber(valueValue)}`,
+          color: colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#e2e8f0',
+          fontSize: 11
+        } as UTSJSONObject)
+      }
+      const detailValue = pointerObject.get('detail')
+      const valueText = this.formatNumber(pointerObject.get('value'))
+      if (detailValue != null && `${detailValue}` != '' && `${detailValue}` != valueText && `${detailValue}` != `${pointerObject.get('value')}`) {
+        lines.push({
+          text: `${detailValue}`,
+          color: '#cbd5e1',
+          fontSize: 11
+        } as UTSJSONObject)
+      }
+      return lines
+    },
+    drawGaugeTooltipBox() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      if (!this.shouldShowTooltipContent(this.option)) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const lines = this.getGaugeTooltipLines(activePointer)
+      if (lines.length == 0) {
+        return
+      }
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue as number : 11
+        const textValue = lineObject.get('text')
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(textValue != null ? `${textValue}` : '', fontSize))
+        boxHeight += fontSize + lineGap
+      })
+      boxWidth += paddingX * 2
+      const eventValue = pointerObject.get('event') as UTSJSONObject | null
+      let anchorX = pointerObject.get('x') as number
+      let anchorY = pointerObject.get('y') as number
+      if (eventValue != null) {
+        const offsetX = eventValue.get('offsetX')
+        const offsetY = eventValue.get('offsetY')
+        if (typeof offsetX == 'number') anchorX = offsetX as number
+        if (typeof offsetY == 'number') anchorY = offsetY as number
+      }
+      let boxX = anchorX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = anchorX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, anchorY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const backgroundColorValue = tooltip.get('backgroundColor')
+      const borderColorValue = tooltip.get('borderColor')
+      const borderWidthValue = tooltip.get('borderWidth')
+      const textStyleValue = tooltip.get('textStyle')
+      const textStyle = (textStyleValue != null ? textStyleValue : {}) as UTSJSONObject
+      const defaultTextColorValue = textStyle.get('color')
+      const backgroundColor = backgroundColorValue != null && `${backgroundColorValue}` != '' ? `${backgroundColorValue}` : 'rgba(15, 23, 42, 0.88)'
+      const borderColor = borderColorValue != null && `${borderColorValue}` != '' ? `${borderColorValue}` : 'rgba(148, 163, 184, 0.5)'
+      const borderWidth = typeof borderWidthValue == 'number' ? borderWidthValue as number : 1
+      const defaultTextColor = defaultTextColorValue != null && `${defaultTextColorValue}` != '' ? `${defaultTextColorValue}` : '#e2e8f0'
+      ctx.$callMethod('setFillStyle', backgroundColor)
+      ctx.$callMethod('fillRect', boxX, boxY, boxWidth, boxHeight)
+      ctx.$callMethod('setStrokeStyle', borderColor)
+      ctx.$callMethod('setLineWidth', borderWidth)
+      ctx.$callMethod('strokeRect', boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue as number : 11
+        const colorValue = lineObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : defaultTextColor
+        const textValue = lineObject.get('text')
+        ctx.$callMethod('setFontSize', fontSize)
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('setTextAlign', 'left')
+        ctx.$callMethod('setTextBaseline', 'top')
+        ctx.$callMethod('fillText', textValue != null ? `${textValue}` : '', boxX + paddingX, currentY)
+        currentY += fontSize + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
+      if (this.gaugeMeta == null) {
+        this.activePointer = null
+        return null
+      }
+      const meta = this.gaugeMeta as UTSJSONObject
+      const valuesValue = meta.get('values')
+      const values = Array.isArray(valuesValue) ? valuesValue : [] as any[]
+      if (values.length == 0) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildGaugePointer(touchX, touchY)
+      if (pointer == null) {
+        return this.activePointer
+      }
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('lastX', touchX)
+      touchInfoObject.set('lastY', touchY)
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart()
+      return pointer
+    },
+    getTouchPoint(event : any) : UTSJSONObject | null {
+      if (event == null) return null
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      if (touches.length > 0) return touches[0] as UTSJSONObject
+      const changedValue = eventObject.get('changedTouches')
+      const changed = Array.isArray(changedValue) ? changedValue : [] as any[]
+      if (changed.length > 0) return changed[0] as UTSJSONObject
+      return null
+    },
+    handleTouchStart(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) return
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX as number : 0
+      const y = typeof touchY == 'number' ? touchY as number : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('startX', x)
+      touchInfoObject.set('startY', y)
+      touchInfoObject.set('lastX', x)
+      touchInfoObject.set('lastY', y)
+      this.updateActivePointer(x, y, true)
+    },
+    handleTouchMove(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) return
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX as number : 0
+      const y = typeof touchY == 'number' ? touchY as number : 0
+      this.updateActivePointer(x, y, true)
+    },
+    handleTouchEnd(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) return
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const endX = typeof touchX == 'number' ? touchX as number : 0
+      const endY = typeof touchY == 'number' ? touchY as number : 0
+      const pointer = this.updateActivePointer(endX, endY, true)
+      const finalPointer = pointer != null ? pointer : this.activePointer
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const startXValue = touchInfoObject.get('startX')
+      const startYValue = touchInfoObject.get('startY')
+      const startX = typeof startXValue == 'number' ? startXValue as number : 0
+      const startY = typeof startYValue == 'number' ? startYValue as number : 0
+      const moved = Math.abs(endX - startX) > this.TAP_SLOP || Math.abs(endY - startY) > this.TAP_SLOP
+      if (!moved && finalPointer != null) {
+        this.$emit('click', finalPointer)
+      }
     },
     updateChart(option : any) {
       if (this.ctx == null || option == null) {
@@ -150,9 +477,6 @@ export default {
       this.isInited = true
       this.progressValue = [] as any[]
       this.drawChart()
-    },
-    tap(event : any) {
-      this.$emit('click', event)
     },
     refresh() {
       this.drawChart()
