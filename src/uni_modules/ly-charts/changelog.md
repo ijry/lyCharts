@@ -1,3 +1,10 @@
+## 26.2.2
+feat: 为 line/bar/scatter/pie/radar/gauge 补齐点击与拖动当前数据展示
+
+- 兼容 ECharts 风格 option/event（tooltipShow、click）
+- 覆盖 uni-app 与 uni-app-x 两端
+- 保持 candlestick 行为不变
+
 ## 26.2.1（2026-07-15）
 feat: 新增K线图组件
 
