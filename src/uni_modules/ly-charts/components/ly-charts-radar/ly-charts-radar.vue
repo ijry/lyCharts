@@ -4,9 +4,9 @@
       :id="cid" 
       :canvas-id="cid" 
       :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
-      @touchstart="tap"
-      @touchmove="move"
-      @touchend="touchEnd"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
     ></canvas>
   </view>
 </template>
@@ -54,7 +54,7 @@ const props = defineProps({
 });
 
 // 定义事件
-const emit = defineEmits(['click']);
+const emit = defineEmits(['click', 'tooltipShow']);
 
 // 生成唯一ID
 const cid = 'u-charts-radar-' + Math.random().toString(36).substr(2);
@@ -66,6 +66,14 @@ const canvasWidth = ref(typeof props.width === 'string' && props.width.indexOf('
 const canvasHeight = ref(typeof props.height === 'string' ? parseUnit(props.height) : props.height);
 const isMount = ref(false);
 const chartInstance = ref(null);
+const activePointer = ref(null);
+const touchInfo = ref({
+  startX: 0,
+  startY: 0,
+  lastX: 0,
+  lastY: 0
+});
+const TAP_SLOP = 8;
 
 // 解析单位的辅助函数，支持rpx、px和数字
 const parseUnit = (value) => {
@@ -189,13 +197,11 @@ const drawNativeRadar = () => {
   drawRadarGrid(ctx, centerX, centerY, maxRadius, indicators);
   
   // 绘制数据
-  drawRadarData(ctx, centerX, centerY, maxRadius, indicators, processedSeries);
+  const seriesPoints = drawRadarData(ctx, centerX, centerY, maxRadius, indicators, processedSeries);
   
   // 绘制指示器标签
   drawRadarLabels(ctx, centerX, centerY, maxRadius, indicators);
-  
-  ctx.draw(false);
-  
+
   // 保存图表实例信息
   chartInstance.value = {
     type: 'native-radar',
@@ -204,8 +210,16 @@ const drawNativeRadar = () => {
     centerX: centerX,
     centerY: centerY,
     radius: maxRadius,
+    seriesPoints,
     destroy: () => {} // 空销毁函数
   };
+
+  if (activePointer.value) {
+    drawRadarAxisPointer(ctx);
+    drawRadarTooltipBox(ctx);
+  }
+  
+  ctx.draw(false);
   // #endif
 };
 
@@ -474,6 +488,7 @@ const drawRadarGrid = (ctx, centerX, centerY, maxRadius, indicators) => {
 // 绘制雷达图数据
 const drawRadarData = (ctx, centerX, centerY, maxRadius, indicators, data) => {
   const numIndicators = indicators.length;
+  const seriesPoints = [];
   
   // 默认颜色列表
   const defaultColors = props.option.color || [
@@ -533,6 +548,7 @@ const drawRadarData = (ctx, centerX, centerY, maxRadius, indicators, data) => {
     
     // 计算数据点位置
     let points = [];
+    const structuredPoints = [];
     for (let i = 0; i < numIndicators; i++) {
       const indicator = indicators[i];
       const maxValue = indicator.max || 100;
@@ -545,7 +561,20 @@ const drawRadarData = (ctx, centerX, centerY, maxRadius, indicators, data) => {
       const y = centerY + radius * Math.sin(angle);
       
       points.push({ x, y });
+      structuredPoints.push({
+        indicatorIndex: i,
+        name: indicator.name,
+        value,
+        x,
+        y
+      });
     }
+    seriesPoints.push({
+      seriesIndex: s,
+      seriesName: seriesItem.name || `Series ${s}`,
+      color,
+      points: structuredPoints
+    });
     
     // 绘制数据区域填充（可选，根据areaStyle决定是否需要）
     // 修改: 添加对areaStyle的支持，符合ECharts接口
@@ -687,6 +716,7 @@ const drawRadarData = (ctx, centerX, centerY, maxRadius, indicators, data) => {
       }
     }
   }
+  return seriesPoints;
 };
 
 // 绘制雷达图标签
@@ -769,29 +799,272 @@ const drawRadarLabels = (ctx, centerX, centerY, maxRadius, indicators) => {
   }
 };
 
-// 点击事件
-const tap = (e) => {
-  if (chartInstance.value && chartInstance.value.type === 'native-radar') {
-    // 雷达图点击处理
-    const { x, y } = e.touches[0];
-    // 可以添加点击处理逻辑
-    
-    emit('click', {
-      x: x,
-      y: y,
-      event: e
+const shouldShowTooltipContent = (option) => {
+  const tooltip = option?.tooltip || {};
+  return tooltip.show !== false && tooltip.showContent !== false;
+};
+
+const shouldShowAxisPointer = (option) => {
+  const axisPointer = option?.tooltip?.axisPointer || {};
+  return axisPointer.show !== false;
+};
+
+const measureTextWidth = (ctx, text, fontSize = 12) => {
+  if (!ctx || typeof ctx.measureText !== 'function') {
+    return String(text).length * fontSize * 0.6;
+  }
+  ctx.setFontSize(fontSize);
+  return ctx.measureText(String(text)).width || (String(text).length * fontSize * 0.6);
+};
+
+const formatNumber = (value, digits = 2) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '--';
+  return n.toFixed(digits);
+};
+
+const buildRadarPointerPayload = (touchX, touchY) => {
+  const chart = chartInstance.value;
+  if (!chart || chart.type !== 'native-radar') return null;
+  const seriesPoints = chart.seriesPoints || [];
+  const indicators = chart.indicators || [];
+  if (!seriesPoints.length || !indicators.length) return null;
+
+  const dx = touchX - chart.centerX;
+  const dy = touchY - chart.centerY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (distance > (chart.radius || 0) * 1.15) return null;
+
+  // 1) nearest series vertex within ~24px
+  let bestVertex = null;
+  let bestVertexDist = Infinity;
+  seriesPoints.forEach((series) => {
+    (series.points || []).forEach((point) => {
+      const dist = Math.sqrt(Math.pow(point.x - touchX, 2) + Math.pow(point.y - touchY, 2));
+      if (dist < bestVertexDist && dist <= 24) {
+        bestVertexDist = dist;
+        bestVertex = {
+          series,
+          point
+        };
+      }
+    });
+  });
+
+  let indicatorIndex = -1;
+  let primarySeries = null;
+  let primaryPoint = null;
+  if (bestVertex) {
+    indicatorIndex = bestVertex.point.indicatorIndex;
+    primarySeries = bestVertex.series;
+    primaryPoint = bestVertex.point;
+  } else {
+    // 2) nearest indicator by angle inside radius
+    let angle = Math.atan2(dy, dx);
+    // convert to radar start-at-top coordinate: 0 at top, clockwise with index growth
+    let normalized = angle + Math.PI / 2;
+    if (normalized < 0) normalized += Math.PI * 2;
+    const step = (Math.PI * 2) / indicators.length;
+    indicatorIndex = Math.round(normalized / step) % indicators.length;
+    // choose closest series value at that indicator as primary
+    let minDist = Infinity;
+    seriesPoints.forEach((series) => {
+      const point = (series.points || [])[indicatorIndex];
+      if (!point) return;
+      const dist = Math.sqrt(Math.pow(point.x - touchX, 2) + Math.pow(point.y - touchY, 2));
+      if (dist < minDist) {
+        minDist = dist;
+        primarySeries = series;
+        primaryPoint = point;
+      }
     });
   }
+
+  if (indicatorIndex < 0 || !primarySeries || !primaryPoint) return null;
+
+  const seriesValues = [];
+  seriesPoints.forEach((series) => {
+    const point = (series.points || [])[indicatorIndex];
+    if (!point) return;
+    seriesValues.push({
+      seriesName: series.seriesName,
+      value: point.value,
+      color: series.color
+    });
+  });
+
+  const indicator = indicators[indicatorIndex] || {};
+  return {
+    componentType: 'series',
+    seriesType: 'radar',
+    seriesName: primarySeries.seriesName,
+    name: indicator.name || primaryPoint.name,
+    dataIndex: indicatorIndex,
+    indicatorIndex,
+    value: primaryPoint.value,
+    color: primarySeries.color,
+    seriesValues,
+    x: primaryPoint.x,
+    y: primaryPoint.y,
+    centerX: chart.centerX,
+    centerY: chart.centerY,
+    radius: chart.radius,
+    event: {
+      offsetX: touchX,
+      offsetY: touchY
+    }
+  };
 };
 
-// 移动事件
-const move = (e) => {
-  // 可以添加触摸移动逻辑
+const getRadarTooltipLines = (pointer) => {
+  const lines = [
+    { text: String(pointer.name ?? ''), color: '#f8fafc', fontSize: 12 }
+  ];
+  (pointer.seriesValues || []).forEach((item) => {
+    lines.push({
+      text: `${item.seriesName} ${formatNumber(item.value)}`,
+      color: item.color || '#e2e8f0',
+      fontSize: 11
+    });
+  });
+  return lines;
 };
 
-// 触摸结束事件
-const touchEnd = (e) => {
-  // 可以添加触摸结束逻辑
+const drawRadarAxisPointer = (ctx) => {
+  const pointer = activePointer.value;
+  const chart = chartInstance.value;
+  if (!pointer || !ctx || !chart) return;
+  if (!shouldShowAxisPointer(props.option)) return;
+
+  const axisPointer = props.option?.tooltip?.axisPointer || {};
+  const lineColor = axisPointer.lineStyle?.color || 'rgba(71, 85, 105, 0.75)';
+  const lineWidth = axisPointer.lineStyle?.width || 1;
+
+  // ray from center through active indicator vertex
+  ctx.beginPath();
+  ctx.setStrokeStyle(lineColor);
+  ctx.setLineWidth(lineWidth);
+  ctx.moveTo(chart.centerX, chart.centerY);
+  // extend to outer radius along same direction as point
+  const dx = pointer.x - chart.centerX;
+  const dy = pointer.y - chart.centerY;
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+  const endX = chart.centerX + (dx / dist) * chart.radius;
+  const endY = chart.centerY + (dy / dist) * chart.radius;
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+
+  // emphasize all series points on selected indicator
+  (chart.seriesPoints || []).forEach((series) => {
+    const point = (series.points || [])[pointer.indicatorIndex];
+    if (!point) return;
+    ctx.beginPath();
+    ctx.setFillStyle('#ffffff');
+    ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.setFillStyle(series.color || '#5470c6');
+    ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+};
+
+const drawRadarTooltipBox = (ctx) => {
+  const pointer = activePointer.value;
+  if (!pointer || !ctx) return;
+  if (!shouldShowTooltipContent(props.option)) return;
+
+  const lines = getRadarTooltipLines(pointer);
+  const paddingX = 10;
+  const paddingY = 8;
+  const lineGap = 6;
+  let boxWidth = 0;
+  let boxHeight = paddingY * 2 - lineGap;
+  lines.forEach((line) => {
+    boxWidth = Math.max(boxWidth, measureTextWidth(ctx, line.text, line.fontSize || 11));
+    boxHeight += (line.fontSize || 11) + lineGap;
+  });
+  boxWidth += paddingX * 2;
+
+  const anchorX = pointer.event?.offsetX ?? pointer.x ?? 0;
+  const anchorY = pointer.event?.offsetY ?? pointer.y ?? 0;
+  let boxX = anchorX + 12;
+  if (boxX + boxWidth > canvasWidth.value - 8) {
+    boxX = anchorX - boxWidth - 12;
+  }
+  boxX = Math.max(8, boxX);
+  let boxY = Math.max(8, anchorY - boxHeight - 12);
+  if (boxY + boxHeight > canvasHeight.value - 8) {
+    boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
+  }
+
+  const tooltip = props.option?.tooltip || {};
+  ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
+  ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+  ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
+  ctx.setLineWidth(tooltip.borderWidth || 1);
+  ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+  let currentY = boxY + paddingY;
+  lines.forEach((line) => {
+    ctx.setFontSize(line.fontSize || 11);
+    ctx.setFillStyle(line.color || tooltip.textStyle?.color || '#e2e8f0');
+    ctx.setTextAlign('left');
+    ctx.setTextBaseline('top');
+    ctx.fillText(line.text, boxX + paddingX, currentY);
+    currentY += (line.fontSize || 11) + lineGap;
+  });
+};
+
+const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
+  const chart = chartInstance.value;
+  if (!chart || chart.type !== 'native-radar' || !(chart.seriesPoints || []).length) {
+    activePointer.value = null;
+    return null;
+  }
+  const pointer = buildRadarPointerPayload(touchX, touchY);
+  if (!pointer) {
+    return activePointer.value;
+  }
+  touchInfo.value.lastX = touchX;
+  touchInfo.value.lastY = touchY;
+  activePointer.value = pointer;
+  if (emitTooltip) {
+    emit('tooltipShow', pointer);
+  }
+  drawChart();
+  return pointer;
+};
+
+const handleTouchStart = (e) => {
+  const touch = e.touches && e.touches[0];
+  if (!touch) return;
+  touchInfo.value.startX = touch.x || 0;
+  touchInfo.value.startY = touch.y || 0;
+  touchInfo.value.lastX = touchInfo.value.startX;
+  touchInfo.value.lastY = touchInfo.value.startY;
+  updateActivePointer(touchInfo.value.startX, touchInfo.value.startY, true);
+};
+
+const handleTouchMove = (e) => {
+  e.preventDefault && e.preventDefault();
+  const touch = e.touches && e.touches[0];
+  if (!touch) return;
+  updateActivePointer(touch.x || 0, touch.y || 0, true);
+};
+
+const handleTouchEnd = (e) => {
+  const touch = e.changedTouches && e.changedTouches[0];
+  if (!touch) return;
+  const endX = touch.x || 0;
+  const endY = touch.y || 0;
+  const pointer = updateActivePointer(endX, endY, true) || activePointer.value;
+  const moved =
+    Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
+    Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
+  if (!moved && pointer) {
+    emit('click', pointer);
+  }
 };
 
 // 更新数据
