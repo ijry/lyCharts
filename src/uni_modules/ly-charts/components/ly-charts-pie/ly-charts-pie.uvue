@@ -9,6 +9,7 @@
       :use-root-height-and-width="true"
       @ready="handleCanvasReady"
       @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
     />
   </view>
@@ -19,6 +20,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-pie',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -40,10 +42,15 @@ export default {
       canvasWidth: 0,
       canvasHeight: 0,
       sectorData: [] as any[],
-      touchPoint: {
-        x: 0,
-        y: 0
-      }
+      pieMeta: null as any,
+      activePointer: null as any,
+      touchInfo: {
+        startX: 0,
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -85,6 +92,28 @@ export default {
       }
       return parseFloat(value) || 0
     },
+    shouldShowTooltipContent(option : any) : boolean {
+      const tooltip = option && option.tooltip ? option.tooltip : {}
+      return tooltip.show !== false && tooltip.showContent !== false
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      if (!this.ctx || typeof this.ctx.measureText !== 'function') {
+        return String(text).length * fontSize * 0.6
+      }
+      this.ctx.setFontSize(fontSize)
+      const metrics = this.ctx.measureText(String(text))
+      return (metrics && metrics.width) ? metrics.width : (String(text).length * fontSize * 0.6)
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = Number(value)
+      if (!isFinite(n)) return '--'
+      return n.toFixed(digits)
+    },
+    formatPercent(value : any) : string {
+      const n = Number(value)
+      if (!isFinite(n)) return '--'
+      return `${n.toFixed(1)}%`
+    },
     drawChart() {
       if (!this.ctx || !this.option) {
         return
@@ -93,6 +122,8 @@ export default {
       const series = this.option.series && this.option.series.length > 0 ? this.option.series[0] : {}
       const data = series.data || []
       if (!Array.isArray(data) || data.length === 0) {
+        this.sectorData = []
+        this.pieMeta = null
         this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
         return
       }
@@ -152,18 +183,16 @@ export default {
         const color = (item.itemStyle && item.itemStyle.color) || item.color || chartHelper.getColor(index)
 
         this.ctx.beginPath()
-        this.ctx.moveTo(centerX, centerY)
-        this.ctx.setFillStyle(color)
-        this.ctx.arc(centerX, centerY, outerRadiusPx, startAngle, endAngle)
-        this.ctx.closePath()
-        this.ctx.fill()
-
         if (innerRadiusPx > 0) {
-          this.ctx.beginPath()
-          this.ctx.setFillStyle(this.option.backgroundColor || '#ffffff')
-          this.ctx.arc(centerX, centerY, innerRadiusPx, 0, Math.PI * 2)
-          this.ctx.fill()
+          this.ctx.arc(centerX, centerY, outerRadiusPx, startAngle, endAngle)
+          this.ctx.arc(centerX, centerY, innerRadiusPx, endAngle, startAngle, true)
+        } else {
+          this.ctx.moveTo(centerX, centerY)
+          this.ctx.arc(centerX, centerY, outerRadiusPx, startAngle, endAngle)
+          this.ctx.closePath()
         }
+        this.ctx.setFillStyle(color)
+        this.ctx.fill()
 
         if (series.label && series.label.show) {
           const midAngle = startAngle + angle / 2
@@ -180,51 +209,38 @@ export default {
         this.sectorData.push({
           startAngle,
           endAngle,
+          middleAngle: startAngle + angle / 2,
           centerX,
           centerY,
           innerRadius: innerRadiusPx,
           outerRadius: outerRadiusPx,
           name: item.name,
           value,
-          color
+          color,
+          dataIndex: index,
+          data: item,
+          percent: total === 0 ? 0 : (value / total) * 100
         })
         startAngle = endAngle
       })
 
+      this.pieMeta = {
+        centerX,
+        centerY,
+        outerRadius: outerRadiusPx,
+        innerRadius: innerRadiusPx,
+        total,
+        seriesName: series.name
+      }
+
+      if (this.activePointer) {
+        this.drawPieActiveSector()
+        this.drawPieTooltipBox()
+      }
+
       this.ctx.draw()
     },
-    handleTouchStart(event : any) {
-      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
-      if (touch) {
-        this.touchPoint.x = touch.x || 0
-        this.touchPoint.y = touch.y || 0
-      }
-    },
-    handleTouchEnd(event : any) {
-      const touch = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] : null
-      if (!touch) {
-        return
-      }
-      const x = touch.x || 0
-      const y = touch.y || 0
-      const sector = this.findSector(x, y)
-      if (sector) {
-        const payload = {
-          componentType: 'series',
-          seriesType: 'pie',
-          name: sector.name,
-          value: sector.value,
-          color: sector.color,
-          event: {
-            offsetX: x,
-            offsetY: y
-          }
-        }
-        this.$emit('click', payload)
-        this.$emit('tooltipShow', payload)
-      }
-    },
-    findSector(x : number, y : number) {
+    findSector(x : number, y : number) : any {
       for (let i = 0; i < this.sectorData.length; i++) {
         const sector = this.sectorData[i]
         const dx = x - sector.centerX
@@ -243,6 +259,162 @@ export default {
       }
       return null
     },
+    buildPiePointerPayload(x : number, y : number) : any {
+      const sector = this.findSector(x, y)
+      if (!sector) return null
+      const markerRadius = ((sector.outerRadius || 0) + (sector.innerRadius || 0)) / 2 || (sector.outerRadius || 0) * 0.65
+      const markerX = sector.centerX + markerRadius * Math.cos(sector.middleAngle)
+      const markerY = sector.centerY + markerRadius * Math.sin(sector.middleAngle)
+      return {
+        componentType: 'series',
+        seriesType: 'pie',
+        seriesName: this.pieMeta ? this.pieMeta.seriesName : '',
+        name: sector.name,
+        dataIndex: sector.dataIndex,
+        value: sector.value,
+        percent: sector.percent,
+        color: sector.color,
+        data: sector.data,
+        x: markerX,
+        y: markerY,
+        startAngle: sector.startAngle,
+        endAngle: sector.endAngle,
+        centerX: sector.centerX,
+        centerY: sector.centerY,
+        outerRadius: sector.outerRadius,
+        innerRadius: sector.innerRadius,
+        event: {
+          offsetX: x,
+          offsetY: y
+        }
+      }
+    },
+    getPieTooltipLines(pointer : any) : any[] {
+      return [
+        { text: String(pointer.name != null ? pointer.name : ''), color: '#f8fafc', fontSize: 12 },
+        {
+          text: `${this.formatNumber(pointer.value)} (${this.formatPercent(pointer.percent)})`,
+          color: pointer.color || '#e2e8f0',
+          fontSize: 11
+        }
+      ] as any[]
+    },
+    drawPieActiveSector() {
+      if (!this.activePointer || !this.ctx) return
+      const pointer = this.activePointer
+      if (pointer.startAngle == null || pointer.endAngle == null) return
+      this.ctx.beginPath()
+      if ((pointer.innerRadius || 0) > 0) {
+        this.ctx.arc(pointer.centerX, pointer.centerY, pointer.outerRadius, pointer.startAngle, pointer.endAngle)
+        this.ctx.arc(pointer.centerX, pointer.centerY, pointer.innerRadius, pointer.endAngle, pointer.startAngle, true)
+      } else {
+        this.ctx.moveTo(pointer.centerX, pointer.centerY)
+        this.ctx.arc(pointer.centerX, pointer.centerY, pointer.outerRadius, pointer.startAngle, pointer.endAngle)
+        this.ctx.closePath()
+      }
+      this.ctx.setStrokeStyle(pointer.color || '#5470c6')
+      this.ctx.setLineWidth(3)
+      this.ctx.stroke()
+
+      this.ctx.beginPath()
+      this.ctx.setFillStyle('#ffffff')
+      this.ctx.arc(pointer.x, pointer.y, 5, 0, Math.PI * 2)
+      this.ctx.fill()
+      this.ctx.beginPath()
+      this.ctx.setFillStyle(pointer.color || '#5470c6')
+      this.ctx.arc(pointer.x, pointer.y, 3.5, 0, Math.PI * 2)
+      this.ctx.fill()
+    },
+    drawPieTooltipBox() {
+      if (!this.activePointer || !this.ctx) return
+      if (!this.shouldShowTooltipContent(this.option)) return
+      const pointer = this.activePointer
+      const lines = this.getPieTooltipLines(pointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(line.text, line.fontSize || 11))
+        boxHeight += (line.fontSize || 11) + lineGap
+      })
+      boxWidth += paddingX * 2
+      const anchorX = (pointer.event && pointer.event.offsetX != null) ? pointer.event.offsetX : (pointer.x || 0)
+      const anchorY = (pointer.event && pointer.event.offsetY != null) ? pointer.event.offsetY : (pointer.y || 0)
+      let boxX = anchorX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = anchorX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, anchorY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
+      this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+      this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
+      this.ctx.setLineWidth(tooltip.borderWidth || 1)
+      this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        this.ctx.setFontSize(line.fontSize || 11)
+        this.ctx.setFillStyle(line.color || (tooltip.textStyle && tooltip.textStyle.color) || '#e2e8f0')
+        this.ctx.setTextAlign('left')
+        this.ctx.setTextBaseline('top')
+        this.ctx.fillText(line.text, boxX + paddingX, currentY)
+        currentY += (line.fontSize || 11) + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any {
+      if (!this.sectorData.length) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildPiePointerPayload(touchX, touchY)
+      if (!pointer) {
+        return this.activePointer
+      }
+      this.touchInfo.lastX = touchX
+      this.touchInfo.lastY = touchY
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart()
+      return pointer
+    },
+    handleTouchStart(event : any) {
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.touchInfo.startX = touch.x || 0
+      this.touchInfo.startY = touch.y || 0
+      this.touchInfo.lastX = this.touchInfo.startX
+      this.touchInfo.lastY = this.touchInfo.startY
+      this.updateActivePointer(this.touchInfo.startX, this.touchInfo.startY, true)
+    },
+    handleTouchMove(event : any) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault()
+      }
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.updateActivePointer(touch.x || 0, touch.y || 0, true)
+    },
+    handleTouchEnd(event : any) {
+      const touch = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] : null
+      if (!touch) return
+      const endX = touch.x || 0
+      const endY = touch.y || 0
+      const pointer = this.updateActivePointer(endX, endY, true) || this.activePointer
+      const moved =
+        Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
+        Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
+      if (!moved && pointer) {
+        this.$emit('click', pointer)
+      }
+    },
     updateData(data : any[]) {
       if (this.option.series && this.option.series[0]) {
         this.option.series[0].data = data
@@ -250,7 +422,7 @@ export default {
       }
     },
     getChartInstance() {
-      return null
+      return this.pieMeta
     }
   },
   mounted() {

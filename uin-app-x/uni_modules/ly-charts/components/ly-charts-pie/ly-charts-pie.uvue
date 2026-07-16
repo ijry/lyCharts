@@ -9,24 +9,18 @@
       :use-root-height-and-width="true"
       @ready="handleCanvasReady"
       @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
     />
   </view>
 </template>
 
 <script lang="uts">
-interface LyPieCanvasRef {
-  refresh() : any
-  getWidth() : number
-  getHeight() : number
-  clearRect(x : number, y : number, width : number, height : number) : void
-  draw() : void
-}
-
 import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-pie',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -48,18 +42,23 @@ export default {
       canvasWidth: 0,
       canvasHeight: 0,
       sectorData: [] as any[],
-      touchPoint: {
-        x: 0,
-        y: 0
-      }
+      pieMeta: null as any,
+      activePointer: null as any,
+      touchInfo: {
+        startX: 0,
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      } as UTSJSONObject,
+      TAP_SLOP: 8
     }
   },
   computed: {
-    widthStyle() {
-      return typeof this.width === 'number' ? `${this.width}px` : this.width
+    widthStyle() : string {
+      return typeof this.width === 'number' ? `${this.width}px` : `${this.width}`
     },
-    heightStyle() {
-      return typeof this.height === 'number' ? `${this.height}px` : this.height
+    heightStyle() : string {
+      return typeof this.height === 'number' ? `${this.height}px` : `${this.height}`
     }
   },
   watch: {
@@ -85,30 +84,81 @@ export default {
       const eventHeight = eventObject.get('height')
       const refWidth = canvasRef.$callMethod('getWidth')
       const refHeight = canvasRef.$callMethod('getHeight')
-      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth : (typeof refWidth === 'number' ? refWidth : 0)
-      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight : (typeof refHeight === 'number' ? refHeight : 0)
+      this.canvasWidth = typeof eventWidth === 'number' && eventWidth > 0 ? eventWidth as number : (typeof refWidth === 'number' ? refWidth as number : 0)
+      this.canvasHeight = typeof eventHeight === 'number' && eventHeight > 0 ? eventHeight as number : (typeof refHeight === 'number' ? refHeight as number : 0)
       this.drawChart()
     },
-    getSeriesData() {
+    getSeriesData() : any[] {
       const optionObject = this.option as UTSJSONObject
       const seriesValue = optionObject.get('series')
       const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
-      if (series.length === 0) {
+      if (series.length == 0) {
         return [] as any[]
       }
       const firstSerie = series[0] as UTSJSONObject
       const dataValue = firstSerie.get('data')
       return Array.isArray(dataValue) ? dataValue : [] as any[]
     },
-    parsePercentOrNumber(value : any, total : number) {
-      if (typeof value === 'number') {
-        return value
+    getSeriesName() : string {
+      const optionObject = this.option as UTSJSONObject
+      const seriesValue = optionObject.get('series')
+      const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+      if (series.length == 0) {
+        return ''
       }
-      if (typeof value === 'string' && value.endsWith('%')) {
-        return (parseFloat(value) / 100) * total
+      const firstSerie = series[0] as UTSJSONObject
+      const nameValue = firstSerie.get('name')
+      return nameValue != null ? `${nameValue}` : ''
+    },
+    parsePercentOrNumber(value : any, total : number) : number {
+      if (typeof value === 'number') {
+        return value as number
+      }
+      if (typeof value === 'string' && (value as string).endsWith('%')) {
+        return (parseFloat(value as string) / 100) * total
       }
       const parsed = parseFloat(`${value}`)
       return isNaN(parsed) ? 0 : parsed
+    },
+    shouldShowTooltipContent(option : any) : boolean {
+      const optionObject = (option != null ? option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const showValue = tooltip.get('show')
+      const showContentValue = tooltip.get('showContent')
+      if (showValue === false) {
+        return false
+      }
+      if (showContentValue === false) {
+        return false
+      }
+      return true
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      const ctx = this.ctx
+      if (ctx == null) {
+        return text.length * fontSize * 0.6
+      }
+      ctx.$callMethod('setFontSize', fontSize)
+      const metrics = ctx.$callMethod('measureText', text) as TextMetrics | null
+      if (metrics != null && typeof metrics.width == 'number') {
+        return metrics.width
+      }
+      return text.length * fontSize * 0.6
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = typeof value === 'number' ? value as number : parseFloat(`${value}`)
+      if (isNaN(n)) {
+        return '--'
+      }
+      return n.toFixed(digits)
+    },
+    formatPercent(value : any) : string {
+      const n = typeof value === 'number' ? value as number : parseFloat(`${value}`)
+      if (isNaN(n)) {
+        return '--'
+      }
+      return `${n.toFixed(1)}%`
     },
     drawChart() {
       const ctx = this.ctx
@@ -125,6 +175,13 @@ export default {
           ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
         }
 
+        if (seriesData.length == 0) {
+          this.sectorData = [] as any[]
+          this.pieMeta = null
+          ctx.$callMethod('draw')
+          return
+        }
+
         const titleOption = optionObject.get('title')
         const titleHeight = titleOption != null ? chartHelper.drawTitle(ctx, titleOption, this.canvasWidth) : 0
         const legendOption = optionObject.get('legend') as UTSJSONObject | null
@@ -132,65 +189,435 @@ export default {
         const legendHeight = legendOption != null && legendData != null
           ? chartHelper.drawLegend(ctx, legendOption, { top: titleHeight + 10, right: 20, bottom: 20, left: 20 }, this.canvasWidth, chartHelper.defaultColors, this.canvasHeight, titleHeight)
           : 0
-        const centerX = this.canvasWidth / 2
-        const centerY = titleHeight + legendHeight + (this.canvasHeight - titleHeight - legendHeight) / 2
-        const radius = Math.min(this.canvasWidth, this.canvasHeight - titleHeight - legendHeight) * 0.32
+
+        const seriesValue = optionObject.get('series')
+        const seriesArr = Array.isArray(seriesValue) ? seriesValue : [] as any[]
+        const firstSerie = seriesArr.length > 0 ? seriesArr[0] as UTSJSONObject : ({} as UTSJSONObject)
+        const radiusValue = firstSerie.get('radius')
+        const centerValue = firstSerie.get('center')
+        const availableWidth = this.canvasWidth
+        const availableHeight = this.canvasHeight - titleHeight - legendHeight
+        let centerX = this.canvasWidth / 2
+        let centerY = titleHeight + legendHeight + availableHeight / 2
+        if (Array.isArray(centerValue) && centerValue.length >= 2) {
+          centerX = this.parsePercentOrNumber(centerValue[0], this.canvasWidth)
+          centerY = titleHeight + legendHeight + this.parsePercentOrNumber(centerValue[1], availableHeight)
+        }
+
+        let outerRadiusPx = Math.min(this.canvasWidth, availableHeight) * 0.32
+        let innerRadiusPx = 0
+        if (Array.isArray(radiusValue) && radiusValue.length >= 2) {
+          const minSide = Math.min(this.canvasWidth, availableHeight) / 2
+          innerRadiusPx = this.parsePercentOrNumber(radiusValue[0], minSide)
+          outerRadiusPx = this.parsePercentOrNumber(radiusValue[1], minSide)
+        } else if (radiusValue != null) {
+          const minSide = Math.min(this.canvasWidth, availableHeight) / 2
+          outerRadiusPx = this.parsePercentOrNumber(radiusValue, minSide)
+        }
+
         let total = 0
         seriesData.forEach((item : any) => {
           const itemObject = item as UTSJSONObject
           const value = itemObject.get('value')
-          const numericValue = typeof value === 'number' ? value : parseFloat(`${value}`)
+          const numericValue = typeof value === 'number' ? value as number : parseFloat(`${value}`)
           if (!isNaN(numericValue)) {
             total += numericValue
           }
         })
+
+        this.sectorData = [] as any[]
         if (total > 0) {
           let startAngle = -Math.PI / 2
           seriesData.forEach((item : any, index : number) => {
             const itemObject = item as UTSJSONObject
             const rawValue = itemObject.get('value')
-            const value = typeof rawValue === 'number' ? rawValue : parseFloat(`${rawValue}`)
-            if (isNaN(value) || value === 0) {
+            const value = typeof rawValue === 'number' ? rawValue as number : parseFloat(`${rawValue}`)
+            if (isNaN(value) || value == 0) {
               return
             }
             const sliceAngle = value / total * Math.PI * 2
+            const endAngle = startAngle + sliceAngle
             const colorValue = itemObject.get('itemStyle') as UTSJSONObject | null
             const itemColor = colorValue != null ? colorValue.get('color') : null
-            const color = itemColor != null && `${itemColor}` !== '' ? `${itemColor}` : chartHelper.getColor(index)
+            const directColor = itemObject.get('color')
+            let color = chartHelper.getColor(index)
+            if (itemColor != null && `${itemColor}` !== '') {
+              color = `${itemColor}`
+            } else if (directColor != null && `${directColor}` !== '') {
+              color = `${directColor}`
+            }
+
             ctx.$callMethod('beginPath')
-            ctx.$callMethod('moveTo', centerX, centerY)
+            if (innerRadiusPx > 0) {
+              ctx.$callMethod('arc', centerX, centerY, outerRadiusPx, startAngle, endAngle, false)
+              ctx.$callMethod('arc', centerX, centerY, innerRadiusPx, endAngle, startAngle, true)
+            } else {
+              ctx.$callMethod('moveTo', centerX, centerY)
+              ctx.$callMethod('arc', centerX, centerY, outerRadiusPx, startAngle, endAngle, false)
+              ctx.$callMethod('closePath')
+            }
             ctx.$callMethod('setFillStyle', color)
-            ctx.$callMethod('arc', centerX, centerY, radius, startAngle, startAngle + sliceAngle, false)
-            ctx.$callMethod('closePath')
             ctx.$callMethod('fill')
+
             const midAngle = startAngle + sliceAngle / 2
-            const labelX = centerX + Math.cos(midAngle) * (radius + 16)
-            const labelY = centerY + Math.sin(midAngle) * (radius + 16)
+            const labelX = centerX + Math.cos(midAngle) * (outerRadiusPx + 16)
+            const labelY = centerY + Math.sin(midAngle) * (outerRadiusPx + 16)
             ctx.$callMethod('setFillStyle', '#666')
             ctx.$callMethod('setTextAlign', Math.cos(midAngle) >= 0 ? 'left' : 'right')
             ctx.$callMethod('setTextBaseline', 'middle')
             const name = itemObject.get('name')
             ctx.$callMethod('fillText', `${name != null ? name : ''} ${Math.round(value)}`, labelX, labelY)
-            startAngle += sliceAngle
+
+            const sector = {
+              startAngle: startAngle,
+              endAngle: endAngle,
+              middleAngle: midAngle,
+              centerX: centerX,
+              centerY: centerY,
+              innerRadius: innerRadiusPx,
+              outerRadius: outerRadiusPx,
+              name: name != null ? `${name}` : '',
+              value: value,
+              color: color,
+              dataIndex: index,
+              data: item,
+              percent: total == 0 ? 0 : (value / total) * 100
+            } as UTSJSONObject
+            this.sectorData.push(sector)
+            startAngle = endAngle
           })
         }
+
+        this.pieMeta = {
+          centerX: centerX,
+          centerY: centerY,
+          outerRadius: outerRadiusPx,
+          innerRadius: innerRadiusPx,
+          total: total,
+          seriesName: this.getSeriesName()
+        } as UTSJSONObject
+
+        if (this.activePointer != null) {
+          this.drawPieActiveSector()
+          this.drawPieTooltipBox()
+        }
+
         ctx.$callMethod('draw')
       } catch (error) {
         console.error('绘制饼图失败:', error)
       }
     },
+    findSector(x : number, y : number) : any | null {
+      for (let i = 0; i < this.sectorData.length; i++) {
+        const sector = this.sectorData[i] as UTSJSONObject
+        const centerX = sector.get('centerX') as number
+        const centerY = sector.get('centerY') as number
+        const innerRadius = sector.get('innerRadius') as number
+        const outerRadius = sector.get('outerRadius') as number
+        const startAngle = sector.get('startAngle') as number
+        const endAngle = sector.get('endAngle') as number
+        const dx = x - centerX
+        const dy = y - centerY
+        const distance = Math.sqrt(dx * dx + dy * dy)
+        if (distance < innerRadius || distance > outerRadius) {
+          continue
+        }
+        let angle = Math.atan2(dy, dx)
+        if (angle < -Math.PI / 2) {
+          angle += Math.PI * 2
+        }
+        if (angle >= startAngle && angle <= endAngle) {
+          return sector
+        }
+      }
+      return null
+    },
+    buildPiePointerPayload(x : number, y : number) : any | null {
+      const sector = this.findSector(x, y)
+      if (sector == null) {
+        return null
+      }
+      const sectorObject = sector as UTSJSONObject
+      const outerRadius = sectorObject.get('outerRadius') as number
+      const innerRadius = sectorObject.get('innerRadius') as number
+      const middleAngle = sectorObject.get('middleAngle') as number
+      const centerX = sectorObject.get('centerX') as number
+      const centerY = sectorObject.get('centerY') as number
+      const markerRadius = ((outerRadius + innerRadius) / 2) > 0 ? ((outerRadius + innerRadius) / 2) : outerRadius * 0.65
+      const markerX = centerX + markerRadius * Math.cos(middleAngle)
+      const markerY = centerY + markerRadius * Math.sin(middleAngle)
+      const meta = this.pieMeta as UTSJSONObject | null
+      const seriesName = meta != null ? `${meta.get('seriesName') != null ? meta.get('seriesName') : ''}` : ''
+      const nameValue = sectorObject.get('name')
+      const valueValue = sectorObject.get('value')
+      const percentValue = sectorObject.get('percent')
+      const colorValue = sectorObject.get('color')
+      const dataIndexValue = sectorObject.get('dataIndex')
+      const dataValue = sectorObject.get('data')
+      const startAngle = sectorObject.get('startAngle')
+      const endAngle = sectorObject.get('endAngle')
+      return {
+        componentType: 'series',
+        seriesType: 'pie',
+        seriesName: seriesName,
+        name: nameValue != null ? `${nameValue}` : '',
+        dataIndex: typeof dataIndexValue == 'number' ? dataIndexValue : 0,
+        value: valueValue,
+        percent: typeof percentValue == 'number' ? percentValue : 0,
+        color: colorValue != null ? `${colorValue}` : '#5470c6',
+        data: dataValue,
+        x: markerX,
+        y: markerY,
+        startAngle: startAngle,
+        endAngle: endAngle,
+        centerX: centerX,
+        centerY: centerY,
+        outerRadius: outerRadius,
+        innerRadius: innerRadius,
+        event: {
+          offsetX: x,
+          offsetY: y
+        } as UTSJSONObject
+      } as UTSJSONObject
+    },
+    getPieTooltipLines(pointer : any) : any[] {
+      const pointerObject = pointer as UTSJSONObject
+      const nameValue = pointerObject.get('name')
+      const valueValue = pointerObject.get('value')
+      const percentValue = pointerObject.get('percent')
+      const colorValue = pointerObject.get('color')
+      const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#e2e8f0'
+      return [
+        {
+          text: nameValue != null ? `${nameValue}` : '',
+          color: '#f8fafc',
+          fontSize: 12
+        } as UTSJSONObject,
+        {
+          text: `${this.formatNumber(valueValue)} (${this.formatPercent(percentValue)})`,
+          color: color,
+          fontSize: 11
+        } as UTSJSONObject
+      ] as any[]
+    },
+    drawPieActiveSector() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const startAngleValue = pointerObject.get('startAngle')
+      const endAngleValue = pointerObject.get('endAngle')
+      if (typeof startAngleValue != 'number' || typeof endAngleValue != 'number') {
+        return
+      }
+      const startAngle = startAngleValue as number
+      const endAngle = endAngleValue as number
+      const centerX = pointerObject.get('centerX') as number
+      const centerY = pointerObject.get('centerY') as number
+      const outerRadius = pointerObject.get('outerRadius') as number
+      const innerRadiusValue = pointerObject.get('innerRadius')
+      const innerRadius = typeof innerRadiusValue == 'number' ? innerRadiusValue as number : 0
+      const colorValue = pointerObject.get('color')
+      const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#5470c6'
+      const x = pointerObject.get('x') as number
+      const y = pointerObject.get('y') as number
+
+      ctx.$callMethod('beginPath')
+      if (innerRadius > 0) {
+        ctx.$callMethod('arc', centerX, centerY, outerRadius, startAngle, endAngle, false)
+        ctx.$callMethod('arc', centerX, centerY, innerRadius, endAngle, startAngle, true)
+      } else {
+        ctx.$callMethod('moveTo', centerX, centerY)
+        ctx.$callMethod('arc', centerX, centerY, outerRadius, startAngle, endAngle, false)
+        ctx.$callMethod('closePath')
+      }
+      ctx.$callMethod('setStrokeStyle', color)
+      ctx.$callMethod('setLineWidth', 3)
+      ctx.$callMethod('stroke')
+
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('setFillStyle', '#ffffff')
+      ctx.$callMethod('arc', x, y, 5, 0, Math.PI * 2, false)
+      ctx.$callMethod('fill')
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('setFillStyle', color)
+      ctx.$callMethod('arc', x, y, 3.5, 0, Math.PI * 2, false)
+      ctx.$callMethod('fill')
+    },
+    drawPieTooltipBox() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      if (!this.shouldShowTooltipContent(this.option)) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const lines = this.getPieTooltipLines(activePointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue as number : 11
+        const textValue = lineObject.get('text')
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(textValue != null ? `${textValue}` : '', fontSize))
+        boxHeight += fontSize + lineGap
+      })
+      boxWidth += paddingX * 2
+      const eventValue = pointerObject.get('event') as UTSJSONObject | null
+      let anchorX = pointerObject.get('x') as number
+      let anchorY = pointerObject.get('y') as number
+      if (eventValue != null) {
+        const offsetX = eventValue.get('offsetX')
+        const offsetY = eventValue.get('offsetY')
+        if (typeof offsetX == 'number') {
+          anchorX = offsetX as number
+        }
+        if (typeof offsetY == 'number') {
+          anchorY = offsetY as number
+        }
+      }
+      let boxX = anchorX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = anchorX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, anchorY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+
+      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const backgroundColorValue = tooltip.get('backgroundColor')
+      const borderColorValue = tooltip.get('borderColor')
+      const borderWidthValue = tooltip.get('borderWidth')
+      const textStyleValue = tooltip.get('textStyle')
+      const textStyle = (textStyleValue != null ? textStyleValue : {}) as UTSJSONObject
+      const defaultTextColorValue = textStyle.get('color')
+      const backgroundColor = backgroundColorValue != null && `${backgroundColorValue}` != '' ? `${backgroundColorValue}` : 'rgba(15, 23, 42, 0.88)'
+      const borderColor = borderColorValue != null && `${borderColorValue}` != '' ? `${borderColorValue}` : 'rgba(148, 163, 184, 0.5)'
+      const borderWidth = typeof borderWidthValue == 'number' ? borderWidthValue as number : 1
+      const defaultTextColor = defaultTextColorValue != null && `${defaultTextColorValue}` != '' ? `${defaultTextColorValue}` : '#e2e8f0'
+
+      ctx.$callMethod('setFillStyle', backgroundColor)
+      ctx.$callMethod('fillRect', boxX, boxY, boxWidth, boxHeight)
+      ctx.$callMethod('setStrokeStyle', borderColor)
+      ctx.$callMethod('setLineWidth', borderWidth)
+      ctx.$callMethod('strokeRect', boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue as number : 11
+        const colorValue = lineObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : defaultTextColor
+        const textValue = lineObject.get('text')
+        ctx.$callMethod('setFontSize', fontSize)
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('setTextAlign', 'left')
+        ctx.$callMethod('setTextBaseline', 'top')
+        ctx.$callMethod('fillText', textValue != null ? `${textValue}` : '', boxX + paddingX, currentY)
+        currentY += fontSize + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
+      if (this.sectorData.length == 0) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildPiePointerPayload(touchX, touchY)
+      if (pointer == null) {
+        return this.activePointer
+      }
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('lastX', touchX)
+      touchInfoObject.set('lastY', touchY)
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart()
+      return pointer
+    },
+    getTouchPoint(event : any) : UTSJSONObject | null {
+      if (event == null) {
+        return null
+      }
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      if (touches.length > 0) {
+        return touches[0] as UTSJSONObject
+      }
+      const changedValue = eventObject.get('changedTouches')
+      const changed = Array.isArray(changedValue) ? changedValue : [] as any[]
+      if (changed.length > 0) {
+        return changed[0] as UTSJSONObject
+      }
+      return null
+    },
     handleTouchStart(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX as number : 0
+      const y = typeof touchY == 'number' ? touchY as number : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('startX', x)
+      touchInfoObject.set('startY', y)
+      touchInfoObject.set('lastX', x)
+      touchInfoObject.set('lastY', y)
+      this.updateActivePointer(x, y, true)
+    },
+    handleTouchMove(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX as number : 0
+      const y = typeof touchY == 'number' ? touchY as number : 0
+      this.updateActivePointer(x, y, true)
     },
     handleTouchEnd(event : any) {
-    },
-    findSector(x : number, y : number) : any | null {
-      return null
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const endX = typeof touchX == 'number' ? touchX as number : 0
+      const endY = typeof touchY == 'number' ? touchY as number : 0
+      const pointer = this.updateActivePointer(endX, endY, true)
+      const finalPointer = pointer != null ? pointer : this.activePointer
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const startXValue = touchInfoObject.get('startX')
+      const startYValue = touchInfoObject.get('startY')
+      const startX = typeof startXValue == 'number' ? startXValue as number : 0
+      const startY = typeof startYValue == 'number' ? startYValue as number : 0
+      const moved = Math.abs(endX - startX) > this.TAP_SLOP || Math.abs(endY - startY) > this.TAP_SLOP
+      if (!moved && finalPointer != null) {
+        this.$emit('click', finalPointer)
+      }
     },
     updateData(data : any[]) {
       this.drawChart()
     },
     getChartInstance() : any | null {
-      return null
+      return this.pieMeta
     }
   },
   mounted() {
