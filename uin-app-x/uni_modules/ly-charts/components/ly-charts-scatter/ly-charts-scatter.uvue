@@ -28,6 +28,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-scatter',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -50,10 +51,15 @@ export default {
       canvasHeight: 0,
       grid: { top: 10, right: 20, bottom: 25, left: 50 },
       seriesData: [] as any[],
+      activePointer: null as UTSJSONObject | null,
+      plotGrid: null as UTSJSONObject | null,
       touchInfo: {
         startX: 0,
-        startY: 0
-      }
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -127,6 +133,21 @@ export default {
         }
         chartHelper.drawAxis(ctx, this.grid, this.canvasWidth, this.canvasHeight, [minX, (minX + maxX) / 2, maxX], minY, maxY, xAxis, yAxis, 'scatter', 0)
         this.drawScatterSeries(series, minX, maxX, minY, maxY)
+        const gridObjectForPlot = this.grid as UTSJSONObject
+        const gridLeft = gridObjectForPlot.get('left') as number
+        const gridRight = gridObjectForPlot.get('right') as number
+        const gridTop = gridObjectForPlot.get('top') as number
+        const gridBottom = gridObjectForPlot.get('bottom') as number
+        this.plotGrid = {
+          left: gridLeft,
+          top: gridTop,
+          width: this.canvasWidth - gridLeft - gridRight,
+          height: this.canvasHeight - gridTop - gridBottom
+        } as UTSJSONObject
+        if (this.activePointer != null) {
+          this.drawScatterAxisPointer()
+          this.drawScatterTooltipBox()
+        }
         ctx.$callMethod('draw')
       } catch (error) {
         console.error('绘制散点图失败:', error)
@@ -234,13 +255,309 @@ export default {
         })
       })
     },
+    shouldShowTooltipContent(option : any) : boolean {
+      const optionObject = (option != null ? option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      return tooltip.get('show') != false && tooltip.get('showContent') != false
+    },
+    shouldShowAxisPointer(option : any) : boolean {
+      const optionObject = (option != null ? option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const axisPointerValue = tooltip.get('axisPointer')
+      const axisPointer = (axisPointerValue != null ? axisPointerValue : {}) as UTSJSONObject
+      return axisPointer.get('show') != false
+    },
+    measureTextWidth(text : any, fontSize : number = 12) : number {
+      const textValue = `${text}`
+      if (this.ctx == null) {
+        return textValue.length * fontSize * 0.6
+      }
+      this.ctx.$callMethod('setFontSize', fontSize)
+      const measuredResult = this.ctx.$callMethod('measureText', textValue) as TextMetrics | null
+      const measuredWidth = measuredResult != null ? measuredResult.width : 0
+      return measuredWidth > 0 ? measuredWidth : (textValue.length * fontSize * 0.6)
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      if (value == null) {
+        return '--'
+      }
+      const n = typeof value == 'number' ? value : parseFloat(`${value}`)
+      if (typeof n != 'number' || isNaN(n)) {
+        return '--'
+      }
+      return n.toFixed(digits)
+    },
+    formatScatterValue(value : any) : string {
+      if (Array.isArray(value)) {
+        const parts = [] as string[]
+        value.forEach((v : any) => {
+          parts.push(this.formatNumber(v))
+        })
+        return parts.join(', ')
+      }
+      return this.formatNumber(value)
+    },
+    findNearestScatterPoint(x : number, y : number, maxDistance : number = 20) : UTSJSONObject | null {
+      let best = null as UTSJSONObject | null
+      let bestDist = Number.MAX_VALUE
+      this.seriesData.forEach((series : any) => {
+        const seriesObject = series as UTSJSONObject
+        const pointsValue = seriesObject.get('points')
+        const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
+        points.forEach((point : any, dataIndex : number) => {
+          const pointObject = point as UTSJSONObject
+          const px = pointObject.get('x') as number
+          const py = pointObject.get('y') as number
+          const dist = Math.sqrt(Math.pow(px - x, 2) + Math.pow(py - y, 2))
+          if (dist < bestDist && dist <= maxDistance) {
+            bestDist = dist
+            const seriesNameValue = seriesObject.get('name')
+            const colorValue = seriesObject.get('color')
+            const nameValue = pointObject.get('name')
+            best = {
+              componentType: 'series',
+              seriesType: 'scatter',
+              seriesName: seriesNameValue != null ? seriesNameValue : '',
+              name: nameValue != null ? nameValue : '',
+              dataIndex,
+              value: pointObject.get('value'),
+              color: colorValue != null ? colorValue : '',
+              x: px,
+              y: py,
+              event: { offsetX: px, offsetY: py }
+            } as UTSJSONObject
+          }
+        })
+      })
+      return best
+    },
+    getScatterTooltipLines(pointer : any) : any[] {
+      const pointerObject = pointer as UTSJSONObject
+      const nameValue = pointerObject.get('name')
+      const seriesNameValue = pointerObject.get('seriesName')
+      const colorValue = pointerObject.get('color')
+      return [
+        {
+          text: nameValue != null ? `${nameValue}` : '',
+          color: '#f8fafc',
+          fontSize: 12
+        },
+        {
+          text: `${seriesNameValue != null ? seriesNameValue : ''} ${this.formatScatterValue(pointerObject.get('value'))}`,
+          color: colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#e2e8f0',
+          fontSize: 11
+        }
+      ] as any[]
+    },
+    drawScatterAxisPointer() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      const plotGrid = this.plotGrid
+      if (ctx == null || activePointer == null || plotGrid == null) {
+        return
+      }
+      if (!this.shouldShowAxisPointer(this.option)) {
+        return
+      }
+      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const axisPointerValue = tooltip.get('axisPointer')
+      const axisPointer = (axisPointerValue != null ? axisPointerValue : {}) as UTSJSONObject
+      const lineStyleValue = axisPointer.get('lineStyle')
+      const lineStyle = (lineStyleValue != null ? lineStyleValue : {}) as UTSJSONObject
+      const lineColorValue = lineStyle.get('color')
+      const lineWidthValue = lineStyle.get('width')
+      const lineColor = lineColorValue != null && `${lineColorValue}` != '' ? `${lineColorValue}` : 'rgba(71, 85, 105, 0.75)'
+      const lineWidth = typeof lineWidthValue == 'number' ? lineWidthValue : 1
+      const left = plotGrid.get('left') as number
+      const top = plotGrid.get('top') as number
+      const width = plotGrid.get('width') as number
+      const height = plotGrid.get('height') as number
+      const pointerObject = activePointer as UTSJSONObject
+      const x = pointerObject.get('x') as number
+      const y = pointerObject.get('y') as number
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('setStrokeStyle', lineColor)
+      ctx.$callMethod('setLineWidth', lineWidth)
+      ctx.$callMethod('moveTo', x, top)
+      ctx.$callMethod('lineTo', x, top + height)
+      ctx.$callMethod('stroke')
+      const axisType = axisPointer.get('type')
+      if (axisType == 'cross' || axisType == null) {
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('setStrokeStyle', lineColor)
+        ctx.$callMethod('setLineWidth', lineWidth)
+        ctx.$callMethod('moveTo', left, y)
+        ctx.$callMethod('lineTo', left + width, y)
+        ctx.$callMethod('stroke')
+      }
+      const colorValue = pointerObject.get('color')
+      const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#5470c6'
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('setFillStyle', '#ffffff')
+      ctx.$callMethod('arc', x, y, 6, 0, Math.PI * 2, false)
+      ctx.$callMethod('fill')
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('setFillStyle', color)
+      ctx.$callMethod('arc', x, y, 4, 0, Math.PI * 2, false)
+      ctx.$callMethod('fill')
+    },
+    drawScatterTooltipBox() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      if (!this.shouldShowTooltipContent(this.option)) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const lines = this.getScatterTooltipLines(activePointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue : 11
+        const textValue = lineObject.get('text')
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(textValue != null ? `${textValue}` : '', fontSize))
+        boxHeight += fontSize + lineGap
+      })
+      boxWidth += paddingX * 2
+      const pointerX = pointerObject.get('x') as number
+      const pointerY = pointerObject.get('y') as number
+      let boxX = pointerX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = pointerX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, pointerY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const backgroundColorValue = tooltip.get('backgroundColor')
+      const borderColorValue = tooltip.get('borderColor')
+      const borderWidthValue = tooltip.get('borderWidth')
+      const textStyleValue = tooltip.get('textStyle')
+      const textStyle = (textStyleValue != null ? textStyleValue : {}) as UTSJSONObject
+      const defaultTextColorValue = textStyle.get('color')
+      const backgroundColor = backgroundColorValue != null && `${backgroundColorValue}` != '' ? `${backgroundColorValue}` : 'rgba(15, 23, 42, 0.88)'
+      const borderColor = borderColorValue != null && `${borderColorValue}` != '' ? `${borderColorValue}` : 'rgba(148, 163, 184, 0.5)'
+      const borderWidth = typeof borderWidthValue == 'number' ? borderWidthValue : 1
+      const defaultTextColor = defaultTextColorValue != null && `${defaultTextColorValue}` != '' ? `${defaultTextColorValue}` : '#e2e8f0'
+      ctx.$callMethod('setFillStyle', backgroundColor)
+      ctx.$callMethod('fillRect', boxX, boxY, boxWidth, boxHeight)
+      ctx.$callMethod('setStrokeStyle', borderColor)
+      ctx.$callMethod('setLineWidth', borderWidth)
+      ctx.$callMethod('strokeRect', boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue : 11
+        const colorValue = lineObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : defaultTextColor
+        const textValue = lineObject.get('text')
+        ctx.$callMethod('setFontSize', fontSize)
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('setTextAlign', 'left')
+        ctx.$callMethod('setTextBaseline', 'top')
+        ctx.$callMethod('fillText', textValue != null ? `${textValue}` : '', boxX + paddingX, currentY)
+        currentY += fontSize + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
+      if (this.seriesData.length == 0) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.findNearestScatterPoint(touchX, touchY, 20)
+      if (pointer == null) {
+        return this.activePointer
+      }
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('lastX', touchX)
+      touchInfoObject.set('lastY', touchY)
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart(this.option)
+      return pointer
+    },
+    getTouchPoint(event : any) : UTSJSONObject | null {
+      if (event == null) {
+        return null
+      }
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      if (touches.length > 0) {
+        return touches[0] as UTSJSONObject
+      }
+      const changedValue = eventObject.get('changedTouches')
+      const changed = Array.isArray(changedValue) ? changedValue : [] as any[]
+      if (changed.length > 0) {
+        return changed[0] as UTSJSONObject
+      }
+      return null
+    },
     handleTouchStart(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX : 0
+      const y = typeof touchY == 'number' ? touchY : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('startX', x)
+      touchInfoObject.set('startY', y)
+      touchInfoObject.set('lastX', x)
+      touchInfoObject.set('lastY', y)
+      this.updateActivePointer(x, y, true)
     },
     handleTouchMove(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX : 0
+      const y = typeof touchY == 'number' ? touchY : 0
+      this.updateActivePointer(x, y, true)
     },
     handleTouchEnd(event : any) {
-    },
-    handleChartClick(x : number, y : number) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const endX = typeof touchX == 'number' ? touchX : 0
+      const endY = typeof touchY == 'number' ? touchY : 0
+      const pointer = this.updateActivePointer(endX, endY, true)
+      const finalPointer = pointer != null ? pointer : this.activePointer
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const startXValue = touchInfoObject.get('startX')
+      const startYValue = touchInfoObject.get('startY')
+      const startX = typeof startXValue == 'number' ? startXValue : 0
+      const startY = typeof startYValue == 'number' ? startYValue : 0
+      const moved = Math.abs(endX - startX) > this.TAP_SLOP || Math.abs(endY - startY) > this.TAP_SLOP
+      if (!moved && finalPointer != null) {
+        this.$emit('click', finalPointer)
+      }
     },
     setOption(option : any, notMerge : boolean = false) {
       if (notMerge) {

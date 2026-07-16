@@ -20,6 +20,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-scatter',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -42,10 +43,15 @@ export default {
       canvasHeight: 0,
       grid: { top: 10, right: 20, bottom: 25, left: 50 },
       seriesData: [] as any[],
+      activePointer: null as any,
+      plotGrid: null as any,
       touchInfo: {
         startX: 0,
-        startY: 0
-      }
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -122,6 +128,16 @@ export default {
         }
         chartHelper.drawAxis(this.ctx, this.grid, this.canvasWidth, this.canvasHeight, [range.minX, (range.minX + range.maxX) / 2, range.maxX], range.minY, range.maxY, xAxis, yAxis, 'scatter')
         this.drawScatterSeries(series, range.minX, range.maxX, range.minY, range.maxY)
+        this.plotGrid = {
+          left: this.grid.left,
+          top: this.grid.top,
+          width: this.canvasWidth - this.grid.left - this.grid.right,
+          height: this.canvasHeight - this.grid.top - this.grid.bottom
+        }
+        if (this.activePointer) {
+          this.drawScatterAxisPointer()
+          this.drawScatterTooltipBox()
+        }
         this.ctx.draw()
       } catch (error) {
         console.error('绘制散点图失败:', error)
@@ -248,65 +264,182 @@ export default {
       }
       this.ctx.fill()
     },
+    shouldShowTooltipContent(option : any) : boolean {
+      const tooltip = option && option.tooltip ? option.tooltip : {}
+      return tooltip.show !== false && tooltip.showContent !== false
+    },
+    shouldShowAxisPointer(option : any) : boolean {
+      const axisPointer = option && option.tooltip && option.tooltip.axisPointer ? option.tooltip.axisPointer : {}
+      return axisPointer.show !== false
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      if (!this.ctx || typeof this.ctx.measureText !== 'function') {
+        return String(text).length * fontSize * 0.6
+      }
+      this.ctx.setFontSize(fontSize)
+      return this.ctx.measureText(String(text)).width || (String(text).length * fontSize * 0.6)
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = Number(value)
+      if (!isFinite(n)) return '--'
+      return n.toFixed(digits)
+    },
+    formatScatterValue(value : any) : string {
+      if (Array.isArray(value)) {
+        return value.map((v : any) => this.formatNumber(v)).join(', ')
+      }
+      return this.formatNumber(value)
+    },
+    findNearestScatterPoint(x : number, y : number, maxDistance : number = 20) : any {
+      let best = null as any
+      let bestDist = Infinity
+      this.seriesData.forEach((series : any) => {
+        const points = series.points || []
+        points.forEach((point : any, dataIndex : number) => {
+          const dist = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2))
+          if (dist < bestDist && dist <= maxDistance) {
+            bestDist = dist
+            best = {
+              componentType: 'series',
+              seriesType: 'scatter',
+              seriesName: series.name,
+              name: point.name,
+              dataIndex,
+              value: point.value,
+              color: series.color,
+              x: point.x,
+              y: point.y,
+              event: { offsetX: point.x, offsetY: point.y }
+            }
+          }
+        })
+      })
+      return best
+    },
+    getScatterTooltipLines(pointer : any) : any[] {
+      return [
+        { text: String(pointer.name != null ? pointer.name : ''), color: '#f8fafc', fontSize: 12 },
+        { text: `${pointer.seriesName || ''} ${this.formatScatterValue(pointer.value)}`, color: pointer.color || '#e2e8f0', fontSize: 11 }
+      ] as any[]
+    },
+    drawScatterAxisPointer() {
+      if (!this.activePointer || !this.ctx || !this.plotGrid) return
+      if (!this.shouldShowAxisPointer(this.option)) return
+      const axisPointer = this.option && this.option.tooltip && this.option.tooltip.axisPointer ? this.option.tooltip.axisPointer : {}
+      const lineColor = axisPointer.lineStyle && axisPointer.lineStyle.color ? axisPointer.lineStyle.color : 'rgba(71, 85, 105, 0.75)'
+      const lineWidth = axisPointer.lineStyle && axisPointer.lineStyle.width ? axisPointer.lineStyle.width : 1
+      const g = this.plotGrid
+      const x = this.activePointer.x
+      const y = this.activePointer.y
+      this.ctx.beginPath()
+      this.ctx.setStrokeStyle(lineColor)
+      this.ctx.setLineWidth(lineWidth)
+      this.ctx.moveTo(x, g.top)
+      this.ctx.lineTo(x, g.top + g.height)
+      this.ctx.stroke()
+      if (axisPointer.type === 'cross' || axisPointer.type === undefined) {
+        this.ctx.beginPath()
+        this.ctx.setStrokeStyle(lineColor)
+        this.ctx.setLineWidth(lineWidth)
+        this.ctx.moveTo(g.left, y)
+        this.ctx.lineTo(g.left + g.width, y)
+        this.ctx.stroke()
+      }
+      this.ctx.beginPath()
+      this.ctx.setFillStyle('#ffffff')
+      this.ctx.arc(x, y, 6, 0, Math.PI * 2)
+      this.ctx.fill()
+      this.ctx.beginPath()
+      this.ctx.setFillStyle(this.activePointer.color || '#5470c6')
+      this.ctx.arc(x, y, 4, 0, Math.PI * 2)
+      this.ctx.fill()
+    },
+    drawScatterTooltipBox() {
+      if (!this.activePointer || !this.ctx) return
+      if (!this.shouldShowTooltipContent(this.option)) return
+      const pointer = this.activePointer
+      const lines = this.getScatterTooltipLines(pointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(line.text, line.fontSize || 11))
+        boxHeight += (line.fontSize || 11) + lineGap
+      })
+      boxWidth += paddingX * 2
+      let boxX = (pointer.x || 0) + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = (pointer.x || 0) - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, (pointer.y || 0) - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
+      this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+      this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
+      this.ctx.setLineWidth(tooltip.borderWidth || 1)
+      this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        this.ctx.setFontSize(line.fontSize || 11)
+        this.ctx.setFillStyle(line.color || (tooltip.textStyle && tooltip.textStyle.color) || '#e2e8f0')
+        this.ctx.setTextAlign('left')
+        this.ctx.setTextBaseline('top')
+        this.ctx.fillText(line.text, boxX + paddingX, currentY)
+        currentY += (line.fontSize || 11) + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any {
+      if (!this.seriesData.length) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.findNearestScatterPoint(touchX, touchY, 20)
+      if (!pointer) {
+        return this.activePointer
+      }
+      this.touchInfo.lastX = touchX
+      this.touchInfo.lastY = touchY
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart(this.option)
+      return pointer
+    },
     handleTouchStart(event : any) {
       const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
-      if (touch) {
-        this.touchInfo.startX = touch.x || 0
-        this.touchInfo.startY = touch.y || 0
-      }
+      if (!touch) return
+      this.touchInfo.startX = touch.x || 0
+      this.touchInfo.startY = touch.y || 0
+      this.touchInfo.lastX = this.touchInfo.startX
+      this.touchInfo.lastY = this.touchInfo.startY
+      this.updateActivePointer(this.touchInfo.startX, this.touchInfo.startY, true)
     },
     handleTouchMove(event : any) {
       if (event && typeof event.preventDefault === 'function') {
         event.preventDefault()
       }
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.updateActivePointer(touch.x || 0, touch.y || 0, true)
     },
     handleTouchEnd(event : any) {
       const touch = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] : null
-      if (!touch) {
-        return
-      }
+      if (!touch) return
       const endX = touch.x || 0
       const endY = touch.y || 0
-      if (Math.abs(endX - this.touchInfo.startX) < 5 && Math.abs(endY - this.touchInfo.startY) < 5) {
-        this.handleChartClick(endX, endY)
-      }
-    },
-    handleChartClick(x : number, y : number) {
-      let minDistance = Infinity
-      let closestPoint = null as any
-      this.seriesData.forEach((series : any) => {
-        if (!series.points) {
-          return
-        }
-        series.points.forEach((point : any) => {
-          const distance = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2))
-          if (distance < minDistance && distance < 20) {
-            minDistance = distance
-            closestPoint = {
-              seriesName: series.name,
-              name: point.name,
-              value: point.value,
-              color: series.color,
-              x: point.x,
-              y: point.y
-            }
-          }
-        })
-      })
-
-      if (closestPoint) {
-        this.$emit('click', {
-          componentType: 'series',
-          seriesType: 'scatter',
-          seriesName: closestPoint.seriesName,
-          name: closestPoint.name,
-          value: closestPoint.value,
-          color: closestPoint.color,
-          event: {
-            offsetX: closestPoint.x,
-            offsetY: closestPoint.y
-          }
-        })
+      const pointer = this.updateActivePointer(endX, endY, true) || this.activePointer
+      const moved =
+        Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
+        Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
+      if (!moved && pointer) {
+        this.$emit('click', pointer)
       }
     },
     setOption(option : any, notMerge : boolean = false) {

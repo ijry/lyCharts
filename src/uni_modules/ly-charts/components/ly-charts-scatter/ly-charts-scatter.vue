@@ -16,6 +16,7 @@ import chartHelper from '../../libs/util/chartHelper.js';
 
 export default {
   name: 'ly-charts-scatter',
+  emits: ['click', 'tooltipShow'],
   props: {
     // ECharts 风格的配置项
     option: {
@@ -42,11 +43,16 @@ export default {
       grid: { top: 10, right: 20, bottom: 25, left: 50 },
       // 存储系列数据用于事件处理
       seriesData: [],
+      activePointer: null,
+      plotGrid: null,
       // 触摸相关信息
       touchInfo: {
         startX: 0,
-        startY: 0
-      }
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     };
   },
   computed: {
@@ -158,13 +164,17 @@ export default {
         
         // 绘制散点
         this.drawScatterSeries(series, minX, maxX, minY, maxY);
-        
-        // 绘制图例
-        // if (option.legend && option.legend.data) {
-        //   const legendData = series.map(s => s.name);
-        //   const legendOption = { ...option.legend, data: legendData };
-        //   chartHelper.drawLegend(this.ctx, legendOption, this.grid, this.canvasWidth, chartHelper.defaultColors);
-        // }
+
+        this.plotGrid = {
+          left: this.grid.left,
+          top: this.grid.top,
+          width: this.canvasWidth - this.grid.left - this.grid.right,
+          height: this.canvasHeight - this.grid.top - this.grid.bottom
+        };
+        if (this.activePointer) {
+          this.drawScatterAxisPointer();
+          this.drawScatterTooltipBox();
+        }
         
         // 绘制到画布
         this.ctx.draw();
@@ -332,79 +342,182 @@ export default {
     },
     
     // 触摸事件处理
+    shouldShowTooltipContent(option) {
+      const tooltip = option?.tooltip || {};
+      return tooltip.show !== false && tooltip.showContent !== false;
+    },
+    shouldShowAxisPointer(option) {
+      const axisPointer = option?.tooltip?.axisPointer || {};
+      return axisPointer.show !== false;
+    },
+    measureTextWidth(text, fontSize = 12) {
+      if (!this.ctx || typeof this.ctx.measureText !== 'function') {
+        return String(text).length * fontSize * 0.6;
+      }
+      this.ctx.setFontSize(fontSize);
+      return this.ctx.measureText(String(text)).width || (String(text).length * fontSize * 0.6);
+    },
+    formatNumber(value, digits = 2) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return '--';
+      return n.toFixed(digits);
+    },
+    formatScatterValue(value) {
+      if (Array.isArray(value)) {
+        return value.map(v => this.formatNumber(v)).join(', ');
+      }
+      return this.formatNumber(value);
+    },
+    findNearestScatterPoint(x, y, maxDistance = 20) {
+      let best = null;
+      let bestDist = Infinity;
+      (this.seriesData || []).forEach((series) => {
+        (series.points || []).forEach((point, dataIndex) => {
+          const dist = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
+          if (dist < bestDist && dist <= maxDistance) {
+            bestDist = dist;
+            best = {
+              componentType: 'series',
+              seriesType: 'scatter',
+              seriesName: series.name,
+              name: point.name,
+              dataIndex,
+              value: point.value,
+              color: series.color,
+              x: point.x,
+              y: point.y,
+              event: { offsetX: point.x, offsetY: point.y }
+            };
+          }
+        });
+      });
+      return best;
+    },
+    getScatterTooltipLines(pointer) {
+      return [
+        { text: String(pointer.name ?? ''), color: '#f8fafc', fontSize: 12 },
+        { text: `${pointer.seriesName || ''} ${this.formatScatterValue(pointer.value)}`, color: pointer.color || '#e2e8f0', fontSize: 11 }
+      ];
+    },
+    drawScatterAxisPointer() {
+      if (!this.activePointer || !this.ctx || !this.plotGrid) return;
+      if (!this.shouldShowAxisPointer(this.option)) return;
+      const axisPointer = this.option?.tooltip?.axisPointer || {};
+      const lineColor = axisPointer.lineStyle?.color || 'rgba(71, 85, 105, 0.75)';
+      const lineWidth = axisPointer.lineStyle?.width || 1;
+      const g = this.plotGrid;
+      const x = this.activePointer.x;
+      const y = this.activePointer.y;
+      this.ctx.beginPath();
+      this.ctx.setStrokeStyle(lineColor);
+      this.ctx.setLineWidth(lineWidth);
+      this.ctx.moveTo(x, g.top);
+      this.ctx.lineTo(x, g.top + g.height);
+      this.ctx.stroke();
+      if (axisPointer.type === 'cross' || axisPointer.type === undefined) {
+        this.ctx.beginPath();
+        this.ctx.setStrokeStyle(lineColor);
+        this.ctx.setLineWidth(lineWidth);
+        this.ctx.moveTo(g.left, y);
+        this.ctx.lineTo(g.left + g.width, y);
+        this.ctx.stroke();
+      }
+      this.ctx.beginPath();
+      this.ctx.setFillStyle('#ffffff');
+      this.ctx.arc(x, y, 6, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.beginPath();
+      this.ctx.setFillStyle(this.activePointer.color || '#5470c6');
+      this.ctx.arc(x, y, 4, 0, Math.PI * 2);
+      this.ctx.fill();
+    },
+    drawScatterTooltipBox() {
+      if (!this.activePointer || !this.ctx) return;
+      if (!this.shouldShowTooltipContent(this.option)) return;
+      const pointer = this.activePointer;
+      const lines = this.getScatterTooltipLines(pointer);
+      const paddingX = 10;
+      const paddingY = 8;
+      const lineGap = 6;
+      let boxWidth = 0;
+      let boxHeight = paddingY * 2 - lineGap;
+      lines.forEach((line) => {
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(line.text, line.fontSize || 11));
+        boxHeight += (line.fontSize || 11) + lineGap;
+      });
+      boxWidth += paddingX * 2;
+      let boxX = (pointer.x || 0) + 12;
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = (pointer.x || 0) - boxWidth - 12;
+      }
+      boxX = Math.max(8, boxX);
+      let boxY = Math.max(8, (pointer.y || 0) - boxHeight - 12);
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8);
+      }
+      const tooltip = this.option?.tooltip || {};
+      this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
+      this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+      this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
+      this.ctx.setLineWidth(tooltip.borderWidth || 1);
+      this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+      let currentY = boxY + paddingY;
+      lines.forEach((line) => {
+        this.ctx.setFontSize(line.fontSize || 11);
+        this.ctx.setFillStyle(line.color || tooltip.textStyle?.color || '#e2e8f0');
+        this.ctx.setTextAlign('left');
+        this.ctx.setTextBaseline('top');
+        this.ctx.fillText(line.text, boxX + paddingX, currentY);
+        currentY += (line.fontSize || 11) + lineGap;
+      });
+    },
+    updateActivePointer(touchX, touchY, emitTooltip = true) {
+      if (!this.seriesData || !this.seriesData.length) {
+        this.activePointer = null;
+        return null;
+      }
+      const pointer = this.findNearestScatterPoint(touchX, touchY, 20);
+      if (!pointer) {
+        // keep previous pointer when outside snap radius
+        return this.activePointer;
+      }
+      this.touchInfo.lastX = touchX;
+      this.touchInfo.lastY = touchY;
+      this.activePointer = pointer;
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer);
+      }
+      this.drawChart(this.option);
+      return pointer;
+    },
     handleTouchStart(e) {
-      if (e.touches && e.touches.length > 0) {
-        const touch = e.touches[0];
-        this.touchInfo.startX = touch.x || 0;
-        this.touchInfo.startY = touch.y || 0;
-      }
+      const touch = e.touches && e.touches[0];
+      if (!touch) return;
+      this.touchInfo.startX = touch.x || 0;
+      this.touchInfo.startY = touch.y || 0;
+      this.touchInfo.lastX = this.touchInfo.startX;
+      this.touchInfo.lastY = this.touchInfo.startY;
+      this.updateActivePointer(this.touchInfo.startX, this.touchInfo.startY, true);
     },
-    
     handleTouchMove(e) {
-      // 阻止默认行为，避免页面滚动
       e.preventDefault && e.preventDefault();
+      const touch = e.touches && e.touches[0];
+      if (!touch) return;
+      this.updateActivePointer(touch.x || 0, touch.y || 0, true);
     },
-    
     handleTouchEnd(e) {
-      if (e.changedTouches && e.changedTouches.length > 0) {
-        const touch = e.changedTouches[0];
-        const endX = touch.x || 0;
-        const endY = touch.y || 0;
-        
-        // 判断是否为点击事件
-        const deltaX = Math.abs(endX - this.touchInfo.startX);
-        const deltaY = Math.abs(endY - this.touchInfo.startY);
-        
-        if (deltaX < 5 && deltaY < 5) {
-          this.handleChartClick(endX, endY);
-        }
+      const touch = e.changedTouches && e.changedTouches[0];
+      if (!touch) return;
+      const endX = touch.x || 0;
+      const endY = touch.y || 0;
+      const pointer = this.updateActivePointer(endX, endY, true) || this.activePointer;
+      const moved =
+        Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
+        Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP;
+      if (!moved && pointer) {
+        this.$emit('click', pointer);
       }
     },
-    
-    handleChartClick(x, y) {
-      // 查找最近的数据点
-      let minDistance = Infinity;
-      let closestPoint = null;
-      
-      if (this.seriesData && this.seriesData.length > 0) {
-        this.seriesData.forEach(series => {
-          if (series.points && series.points.length > 0) {
-            series.points.forEach(point => {
-              const distance = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
-              if (distance < minDistance && distance < 20) { // 20px 的点击范围
-                minDistance = distance;
-                closestPoint = {
-                  seriesName: series.name,
-                  name: point.name,
-                  value: point.value,
-                  color: series.color,
-                  x: point.x,
-                  y: point.y
-                };
-              }
-            });
-          }
-        });
-      }
-      
-      if (closestPoint) {
-        // 触发点击事件
-        this.$emit('click', {
-          componentType: 'series',
-          seriesType: 'scatter',
-          seriesName: closestPoint.seriesName,
-          name: closestPoint.name,
-          value: closestPoint.value,
-          color: closestPoint.color,
-          event: {
-            offsetX: closestPoint.x,
-            offsetY: closestPoint.y
-          }
-        });
-      }
-    },
-    
-    // 提供类似 ECharts 的 setOption 方法
     setOption(option, notMerge = false) {
       if (notMerge) {
         this.drawChart(option);
