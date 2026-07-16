@@ -8,6 +8,8 @@
       height="100"
       :use-root-height-and-width="true"
       @ready="handleCanvasReady"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
     />
   </view>
@@ -18,6 +20,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-radar',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -38,7 +41,16 @@ export default {
       ctx: null as any,
       canvasWidth: 0,
       canvasHeight: 0,
-      pointData: [] as any[]
+      seriesPoints: [] as any[],
+      radarMeta: null as any,
+      activePointer: null as any,
+      touchInfo: {
+        startX: 0,
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -71,6 +83,27 @@ export default {
       this.canvasHeight = event.height || canvasRef.getHeight()
       this.drawChart()
     },
+    shouldShowTooltipContent(option : any) : boolean {
+      const tooltip = option && option.tooltip ? option.tooltip : {}
+      return tooltip.show !== false && tooltip.showContent !== false
+    },
+    shouldShowAxisPointer(option : any) : boolean {
+      const axisPointer = option && option.tooltip && option.tooltip.axisPointer ? option.tooltip.axisPointer : {}
+      return axisPointer.show !== false
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      if (!this.ctx || typeof this.ctx.measureText !== 'function') {
+        return String(text).length * fontSize * 0.6
+      }
+      this.ctx.setFontSize(fontSize)
+      const metrics = this.ctx.measureText(String(text))
+      return (metrics && metrics.width) ? metrics.width : (String(text).length * fontSize * 0.6)
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = Number(value)
+      if (!isFinite(n)) return '--'
+      return n.toFixed(digits)
+    },
     drawChart() {
       if (!this.ctx || !this.option) {
         return
@@ -80,6 +113,9 @@ export default {
       const indicators = radar.indicator || []
       const series = this.option.series || []
       if (!Array.isArray(indicators) || indicators.length === 0 || !Array.isArray(series) || series.length === 0) {
+        this.seriesPoints = []
+        this.radarMeta = null
+        this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
         return
       }
 
@@ -116,6 +152,18 @@ export default {
       this.drawRadarGrid(centerX, centerY, maxRadius, indicators, levels, angleStep)
       this.drawRadarLabels(centerX, centerY, maxRadius, indicators, angleStep)
       this.drawRadarSeries(centerX, centerY, maxRadius, indicators, series, angleStep)
+
+      this.radarMeta = {
+        centerX,
+        centerY,
+        radius: maxRadius,
+        indicators
+      }
+
+      if (this.activePointer) {
+        this.drawRadarAxisPointer()
+        this.drawRadarTooltipBox()
+      }
       this.ctx.draw()
     },
     drawRadarGrid(centerX : number, centerY : number, radius : number, indicators : any[], levels : number, angleStep : number) {
@@ -168,32 +216,41 @@ export default {
         this.ctx.fillText(indicator.name || '', x, y)
       })
     },
-    drawRadarSeries(centerX : number, centerY : number, radius : number, indicators : any[], series : any[], angleStep : number) {
-      this.pointData = []
-      series.forEach((serie : any, seriesIndex : number) => {
-        const dataItem = Array.isArray(serie.data) && serie.data.length > 0 ? serie.data[0] : null
-        if (!dataItem || !Array.isArray(dataItem.value)) {
-          return
+    extractSeriesValues(serie : any) : any[] {
+      if (Array.isArray(serie)) return serie
+      if (Array.isArray(serie.data)) {
+        // common formats: [v1,v2...] or [{value:[...]}] or [{value:v}]
+        if (serie.data.length > 0 && typeof serie.data[0] === 'object' && !Array.isArray(serie.data[0]) && Array.isArray(serie.data[0].value)) {
+          return serie.data[0].value
         }
+        return serie.data
+      }
+      if (Array.isArray(serie.value)) return serie.value
+      return []
+    },
+    drawRadarSeries(centerX : number, centerY : number, radius : number, indicators : any[], series : any[], angleStep : number) {
+      this.seriesPoints = []
+      series.forEach((serie : any, seriesIndex : number) => {
+        const values = this.extractSeriesValues(serie)
+        if (!values.length) return
         const color = serie.color || (serie.itemStyle && serie.itemStyle.color) || chartHelper.getColor(seriesIndex)
         const points = [] as any[]
-
         this.ctx.beginPath()
         indicators.forEach((indicator : any, index : number) => {
           const max = indicator.max || 100
-          const value = dataItem.value[index] || 0
+          const raw = values[index]
+          const value = Array.isArray(raw) ? (raw[0] || 0) : (raw || 0)
           const ratio = Math.max(0, Math.min(1, value / max))
           const currentRadius = radius * ratio
           const angle = -Math.PI / 2 + index * angleStep
           const x = centerX + currentRadius * Math.cos(angle)
           const y = centerY + currentRadius * Math.sin(angle)
           points.push({
-            x,
-            y,
-            value,
+            indicatorIndex: index,
             name: indicator.name,
-            seriesName: serie.name || `Series ${seriesIndex}`,
-            color
+            value,
+            x,
+            y
           })
           if (index === 0) {
             this.ctx.moveTo(x, y)
@@ -207,46 +264,237 @@ export default {
         this.ctx.setStrokeStyle(color)
         this.ctx.setLineWidth(2)
         this.ctx.stroke()
-
         points.forEach((point : any) => {
           this.ctx.beginPath()
           this.ctx.setFillStyle(color)
           this.ctx.arc(point.x, point.y, 3, 0, Math.PI * 2)
           this.ctx.fill()
         })
-
-        this.pointData.push(...points)
+        this.seriesPoints.push({
+          seriesIndex,
+          seriesName: serie.name || `Series ${seriesIndex}`,
+          color,
+          points
+        })
       })
+    },
+    buildRadarPointerPayload(touchX : number, touchY : number) : any {
+      if (!this.radarMeta || !this.seriesPoints.length) return null
+      const centerX = this.radarMeta.centerX
+      const centerY = this.radarMeta.centerY
+      const radius = this.radarMeta.radius
+      const indicators = this.radarMeta.indicators || []
+      const dx = touchX - centerX
+      const dy = touchY - centerY
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      if (distance > radius * 1.15) return null
+
+      let bestVertex = null as any
+      let bestVertexDist = Infinity
+      this.seriesPoints.forEach((series : any) => {
+        (series.points || []).forEach((point : any) => {
+          const dist = Math.sqrt(Math.pow(point.x - touchX, 2) + Math.pow(point.y - touchY, 2))
+          if (dist < bestVertexDist && dist <= 24) {
+            bestVertexDist = dist
+            bestVertex = { series, point }
+          }
+        })
+      })
+
+      let indicatorIndex = -1
+      let primarySeries = null as any
+      let primaryPoint = null as any
+      if (bestVertex) {
+        indicatorIndex = bestVertex.point.indicatorIndex
+        primarySeries = bestVertex.series
+        primaryPoint = bestVertex.point
+      } else {
+        let angle = Math.atan2(dy, dx)
+        let normalized = angle + Math.PI / 2
+        if (normalized < 0) normalized += Math.PI * 2
+        const step = (Math.PI * 2) / indicators.length
+        indicatorIndex = Math.round(normalized / step) % indicators.length
+        let minDist = Infinity
+        this.seriesPoints.forEach((series : any) => {
+          const point = (series.points || [])[indicatorIndex]
+          if (!point) return
+          const dist = Math.sqrt(Math.pow(point.x - touchX, 2) + Math.pow(point.y - touchY, 2))
+          if (dist < minDist) {
+            minDist = dist
+            primarySeries = series
+            primaryPoint = point
+          }
+        })
+      }
+      if (indicatorIndex < 0 || !primarySeries || !primaryPoint) return null
+
+      const seriesValues = [] as any[]
+      this.seriesPoints.forEach((series : any) => {
+        const point = (series.points || [])[indicatorIndex]
+        if (!point) return
+        seriesValues.push({
+          seriesName: series.seriesName,
+          value: point.value,
+          color: series.color
+        })
+      })
+      const indicator = indicators[indicatorIndex] || {}
+      return {
+        componentType: 'series',
+        seriesType: 'radar',
+        seriesName: primarySeries.seriesName,
+        name: indicator.name || primaryPoint.name,
+        dataIndex: indicatorIndex,
+        indicatorIndex,
+        value: primaryPoint.value,
+        color: primarySeries.color,
+        seriesValues,
+        x: primaryPoint.x,
+        y: primaryPoint.y,
+        centerX,
+        centerY,
+        radius,
+        event: {
+          offsetX: touchX,
+          offsetY: touchY
+        }
+      }
+    },
+    getRadarTooltipLines(pointer : any) : any[] {
+      const lines = [
+        { text: String(pointer.name != null ? pointer.name : ''), color: '#f8fafc', fontSize: 12 }
+      ] as any[]
+      ;(pointer.seriesValues || []).forEach((item : any) => {
+        lines.push({
+          text: `${item.seriesName} ${this.formatNumber(item.value)}`,
+          color: item.color || '#e2e8f0',
+          fontSize: 11
+        })
+      })
+      return lines
+    },
+    drawRadarAxisPointer() {
+      if (!this.activePointer || !this.ctx || !this.radarMeta) return
+      if (!this.shouldShowAxisPointer(this.option)) return
+      const pointer = this.activePointer
+      const axisPointer = this.option && this.option.tooltip && this.option.tooltip.axisPointer ? this.option.tooltip.axisPointer : {}
+      const lineColor = axisPointer.lineStyle && axisPointer.lineStyle.color ? axisPointer.lineStyle.color : 'rgba(71, 85, 105, 0.75)'
+      const lineWidth = axisPointer.lineStyle && axisPointer.lineStyle.width ? axisPointer.lineStyle.width : 1
+      const centerX = this.radarMeta.centerX
+      const centerY = this.radarMeta.centerY
+      const radius = this.radarMeta.radius
+      const dx = pointer.x - centerX
+      const dy = pointer.y - centerY
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1
+      const endX = centerX + (dx / dist) * radius
+      const endY = centerY + (dy / dist) * radius
+      this.ctx.beginPath()
+      this.ctx.setStrokeStyle(lineColor)
+      this.ctx.setLineWidth(lineWidth)
+      this.ctx.moveTo(centerX, centerY)
+      this.ctx.lineTo(endX, endY)
+      this.ctx.stroke()
+      this.seriesPoints.forEach((series : any) => {
+        const point = (series.points || [])[pointer.indicatorIndex]
+        if (!point) return
+        this.ctx.beginPath()
+        this.ctx.setFillStyle('#ffffff')
+        this.ctx.arc(point.x, point.y, 6, 0, Math.PI * 2)
+        this.ctx.fill()
+        this.ctx.beginPath()
+        this.ctx.setFillStyle(series.color || '#5470c6')
+        this.ctx.arc(point.x, point.y, 4, 0, Math.PI * 2)
+        this.ctx.fill()
+      })
+    },
+    drawRadarTooltipBox() {
+      if (!this.activePointer || !this.ctx) return
+      if (!this.shouldShowTooltipContent(this.option)) return
+      const pointer = this.activePointer
+      const lines = this.getRadarTooltipLines(pointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(line.text, line.fontSize || 11))
+        boxHeight += (line.fontSize || 11) + lineGap
+      })
+      boxWidth += paddingX * 2
+      const anchorX = (pointer.event && pointer.event.offsetX != null) ? pointer.event.offsetX : (pointer.x || 0)
+      const anchorY = (pointer.event && pointer.event.offsetY != null) ? pointer.event.offsetY : (pointer.y || 0)
+      let boxX = anchorX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = anchorX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, anchorY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
+      this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+      this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
+      this.ctx.setLineWidth(tooltip.borderWidth || 1)
+      this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        this.ctx.setFontSize(line.fontSize || 11)
+        this.ctx.setFillStyle(line.color || (tooltip.textStyle && tooltip.textStyle.color) || '#e2e8f0')
+        this.ctx.setTextAlign('left')
+        this.ctx.setTextBaseline('top')
+        this.ctx.fillText(line.text, boxX + paddingX, currentY)
+        currentY += (line.fontSize || 11) + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any {
+      if (!this.seriesPoints.length) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildRadarPointerPayload(touchX, touchY)
+      if (!pointer) {
+        return this.activePointer
+      }
+      this.touchInfo.lastX = touchX
+      this.touchInfo.lastY = touchY
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart()
+      return pointer
+    },
+    handleTouchStart(event : any) {
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.touchInfo.startX = touch.x || 0
+      this.touchInfo.startY = touch.y || 0
+      this.touchInfo.lastX = this.touchInfo.startX
+      this.touchInfo.lastY = this.touchInfo.startY
+      this.updateActivePointer(this.touchInfo.startX, this.touchInfo.startY, true)
+    },
+    handleTouchMove(event : any) {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault()
+      }
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.updateActivePointer(touch.x || 0, touch.y || 0, true)
     },
     handleTouchEnd(event : any) {
       const touch = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] : null
-      if (!touch) {
-        return
-      }
-      const x = touch.x || 0
-      const y = touch.y || 0
-      let closestPoint = null as any
-      let minDistance = Infinity
-      this.pointData.forEach((point : any) => {
-        const distance = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2))
-        if (distance < minDistance && distance < 18) {
-          minDistance = distance
-          closestPoint = point
-        }
-      })
-      if (closestPoint) {
-        this.$emit('click', {
-          componentType: 'series',
-          seriesType: 'radar',
-          seriesName: closestPoint.seriesName,
-          name: closestPoint.name,
-          value: closestPoint.value,
-          color: closestPoint.color,
-          event: {
-            offsetX: closestPoint.x,
-            offsetY: closestPoint.y
-          }
-        })
+      if (!touch) return
+      const endX = touch.x || 0
+      const endY = touch.y || 0
+      const pointer = this.updateActivePointer(endX, endY, true) || this.activePointer
+      const moved =
+        Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
+        Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
+      if (!moved && pointer) {
+        this.$emit('click', pointer)
       }
     }
   },
