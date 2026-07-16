@@ -4,7 +4,9 @@
 			:id="canvasId" 
 			:canvas-id="canvasId" 
 			:style="{width: canvasWidth + 'px', height: canvasHeight + 'px'}"
-			@tap="tap"
+			@touchstart="handleTouchStart"
+			@touchmove="handleTouchMove"
+			@touchend="handleTouchEnd"
 		></canvas>
 	</view>
 </template>
@@ -34,7 +36,7 @@ const props = defineProps({
 });
 
 // 定义emit
-const emit = defineEmits(['click']);
+const emit = defineEmits(['click', 'tooltipShow']);
 
 // 响应式数据
 const canvasId = ref('chart-gauge' + Date.now());
@@ -47,6 +49,15 @@ const animationTimer = ref(null);
 const targetValue = ref(0);
 // 添加一个标志位，标识是否已初始化
 const isInited = ref(false);
+const activePointer = ref(null);
+const gaugeMeta = ref(null);
+const touchInfo = ref({
+	startX: 0,
+	startY: 0,
+	lastX: 0,
+	lastY: 0
+});
+const TAP_SLOP = 8;
 
 // 监听option变化
 watch(() => props.option, (newVal) => {
@@ -449,6 +460,48 @@ const drawGauge = (ctx) => {
 		ctx.setTextBaseline('middle');
 		ctx.fillText(text, centerX + offsetX, nameY);
 	}
+
+	// Persist hit geometry for pointer/tooltip interaction
+	const firstData = data[0] || { value: 0 };
+	const firstValue = values[0] ?? 0;
+	let detailText = String(firstValue);
+	if (detail.formatter) {
+		detailText = detail.formatter.replace('{value}', Math.round(Number(firstValue)));
+	}
+	const firstItemStyle = firstData.itemStyle || {};
+	const seriesColor = firstItemStyle.color || itemStyle.color || chartHelper.getColor(0);
+	const seriesValues = data.map((item, index) => {
+		const itemStyleLocal = item.itemStyle || {};
+		return {
+			seriesName: item.name || series.name || `value${index + 1}`,
+			value: values[index] ?? item.value ?? 0,
+			color: itemStyleLocal.color || itemStyle.color || chartHelper.getColor(index)
+		};
+	});
+	gaugeMeta.value = {
+		centerX,
+		centerY,
+		radius,
+		values: values.slice(),
+		seriesName: series.name || firstData.name || '',
+		detailText,
+		color: seriesColor,
+		seriesValues
+	};
+
+	// Keep tooltip in sync during animation redraws
+	if (activePointer.value) {
+		activePointer.value = {
+			...activePointer.value,
+			seriesName: gaugeMeta.value.seriesName,
+			name: gaugeMeta.value.seriesName || firstData.name || '',
+			value: firstValue,
+			color: seriesColor,
+			detail: detailText,
+			seriesValues
+		};
+		drawGaugeTooltipBox(ctx);
+	}
 	
 	ctx.draw();
 };
@@ -546,15 +599,183 @@ const updateChart = (option) => {
 	}
 };
 
-/**
- * 处理点击事件
- * @param {Object} e - 事件对象
- * @author jry <ijry@qq.com>
- * @created 2025-08-05
- */
-const tap = (e) => {
-	// 触发点击事件
-	emit('click', e);
+const shouldShowTooltipContent = (option) => {
+	const tooltip = (option && option.tooltip) || {};
+	return tooltip.show !== false && tooltip.showContent !== false;
+};
+
+const measureTextWidth = (ctx, text, fontSize = 12) => {
+	if (!ctx || typeof ctx.measureText !== 'function') {
+		return String(text).length * fontSize * 0.6;
+	}
+	ctx.setFontSize(fontSize);
+	return ctx.measureText(String(text)).width || (String(text).length * fontSize * 0.6);
+};
+
+const formatNumber = (value, digits = 2) => {
+	const n = Number(value);
+	if (!Number.isFinite(n)) return '--';
+	return n.toFixed(digits);
+};
+
+const buildGaugePointer = (x, y) => {
+	const meta = gaugeMeta.value;
+	if (!meta) return null;
+	const dx = x - meta.centerX;
+	const dy = y - meta.centerY;
+	const dist = Math.sqrt(dx * dx + dy * dy);
+	if (dist > meta.radius * 1.05) return null;
+	const value = (meta.values && meta.values.length > 0) ? meta.values[0] : 0;
+	return {
+		componentType: 'series',
+		seriesType: 'gauge',
+		seriesName: meta.seriesName,
+		name: meta.seriesName,
+		dataIndex: 0,
+		value,
+		color: meta.color,
+		detail: meta.detailText,
+		seriesValues: meta.seriesValues || [],
+		x,
+		y,
+		centerX: meta.centerX,
+		centerY: meta.centerY,
+		radius: meta.radius,
+		event: { offsetX: x, offsetY: y }
+	};
+};
+
+const getGaugeTooltipLines = (pointer) => {
+	const lines = [];
+	if (pointer.seriesName) {
+		lines.push({ text: String(pointer.seriesName), color: '#f8fafc', fontSize: 12 });
+	}
+	if (pointer.seriesValues && pointer.seriesValues.length > 1) {
+		pointer.seriesValues.forEach((item) => {
+			lines.push({
+				text: `${item.seriesName}: ${formatNumber(item.value)}`,
+				color: item.color || '#e2e8f0',
+				fontSize: 11
+			});
+		});
+	} else {
+		lines.push({
+			text: `value: ${formatNumber(pointer.value)}`,
+			color: pointer.color || '#e2e8f0',
+			fontSize: 11
+		});
+	}
+	if (pointer.detail != null && String(pointer.detail) !== '' && String(pointer.detail) !== String(pointer.value)) {
+		lines.push({
+			text: String(pointer.detail),
+			color: '#cbd5e1',
+			fontSize: 11
+		});
+	}
+	return lines;
+};
+
+const drawGaugeTooltipBox = (ctx) => {
+	const pointer = activePointer.value;
+	if (!pointer || !ctx) return;
+	if (!shouldShowTooltipContent(props.option)) return;
+
+	const lines = getGaugeTooltipLines(pointer);
+	if (!lines.length) return;
+
+	const paddingX = 10;
+	const paddingY = 8;
+	const lineGap = 6;
+	let boxWidth = 0;
+	let boxHeight = paddingY * 2 - lineGap;
+	lines.forEach((line) => {
+		boxWidth = Math.max(boxWidth, measureTextWidth(ctx, line.text, line.fontSize || 11));
+		boxHeight += (line.fontSize || 11) + lineGap;
+	});
+	boxWidth += paddingX * 2;
+
+	const anchorX = (pointer.event && pointer.event.offsetX != null) ? pointer.event.offsetX : (pointer.x || 0);
+	const anchorY = (pointer.event && pointer.event.offsetY != null) ? pointer.event.offsetY : (pointer.y || 0);
+	let boxX = anchorX + 12;
+	if (boxX + boxWidth > canvasWidth.value - 8) {
+		boxX = anchorX - boxWidth - 12;
+	}
+	boxX = Math.max(8, boxX);
+	let boxY = Math.max(8, anchorY - boxHeight - 12);
+	if (boxY + boxHeight > canvasHeight.value - 8) {
+		boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
+	}
+
+	const tooltip = (props.option && props.option.tooltip) || {};
+	ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
+	ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+	ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
+	ctx.setLineWidth(tooltip.borderWidth || 1);
+	ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+	let currentY = boxY + paddingY;
+	lines.forEach((line) => {
+		ctx.setFontSize(line.fontSize || 11);
+		ctx.setFillStyle(line.color || ((tooltip.textStyle && tooltip.textStyle.color) || '#e2e8f0'));
+		ctx.setTextAlign('left');
+		ctx.setTextBaseline('top');
+		ctx.fillText(line.text, boxX + paddingX, currentY);
+		currentY += (line.fontSize || 11) + lineGap;
+	});
+};
+
+const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
+	const meta = gaugeMeta.value;
+	if (!meta || !meta.values || meta.values.length === 0) {
+		activePointer.value = null;
+		return null;
+	}
+
+	const pointer = buildGaugePointer(touchX, touchY);
+	if (!pointer) {
+		// Keep last shown value when touch leaves gauge radius
+		return activePointer.value;
+	}
+
+	touchInfo.value.lastX = touchX;
+	touchInfo.value.lastY = touchY;
+	activePointer.value = pointer;
+	if (emitTooltip) {
+		emit('tooltipShow', pointer);
+	}
+	drawChart();
+	return pointer;
+};
+
+const handleTouchStart = (e) => {
+	const touch = e.touches && e.touches[0];
+	if (!touch) return;
+	touchInfo.value.startX = touch.x || 0;
+	touchInfo.value.startY = touch.y || 0;
+	touchInfo.value.lastX = touchInfo.value.startX;
+	touchInfo.value.lastY = touchInfo.value.startY;
+	updateActivePointer(touchInfo.value.startX, touchInfo.value.startY, true);
+};
+
+const handleTouchMove = (e) => {
+	e.preventDefault && e.preventDefault();
+	const touch = e.touches && e.touches[0];
+	if (!touch) return;
+	updateActivePointer(touch.x || 0, touch.y || 0, true);
+};
+
+const handleTouchEnd = (e) => {
+	const touch = e.changedTouches && e.changedTouches[0];
+	if (!touch) return;
+	const endX = touch.x || 0;
+	const endY = touch.y || 0;
+	const pointer = updateActivePointer(endX, endY, true) || activePointer.value;
+	const moved =
+		Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
+		Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
+	if (!moved && pointer) {
+		emit('click', pointer);
+	}
 };
 
 /**
