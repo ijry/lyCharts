@@ -20,6 +20,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-bar',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -42,10 +43,16 @@ export default {
       canvasHeight: 0,
       grid: { top: 10, right: 20, bottom: 25, left: 50 },
       seriesData: [] as any[],
+      activePointer: null as any,
+      plotGrid: null as any,
+      categoryCenters: [] as number[],
       touchInfo: {
         startX: 0,
-        startY: 0
-      }
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -168,6 +175,38 @@ export default {
         }
         chartHelper.drawAxis(this.ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData, range.minY, range.maxY, xAxis, yAxis, 'bar', xAxisPadding)
         this.drawBars(series, xAxisData, range.minY, range.maxY, chartHelper.adjustedYMin, chartHelper.adjustedYMax, xAxisPadding)
+
+        const chartWidth = this.canvasWidth - this.grid.left - this.grid.right
+        const chartHeight = this.canvasHeight - this.grid.top - this.grid.bottom
+        this.plotGrid = {
+          left: this.grid.left,
+          top: this.grid.top,
+          width: chartWidth,
+          height: chartHeight
+        }
+        const centers = [] as number[]
+        const categoryCount = (xAxisData || []).length
+        for (let i = 0; i < categoryCount; i++) {
+          let center : number | null = null
+          for (let s = 0; s < this.seriesData.length; s++) {
+            const seriesItem = this.seriesData[s]
+            const point = seriesItem.points && seriesItem.points[i] ? seriesItem.points[i] : null
+            if (!point) continue
+            center = point.x + (point.width || 0) / 2
+            break
+          }
+          if (center == null) {
+            const paddedChartWidth = chartWidth - 2 * xAxisPadding
+            center = this.grid.left + xAxisPadding + (categoryCount > 1 ? (i / (categoryCount - 1)) * paddedChartWidth : paddedChartWidth / 2)
+          }
+          centers.push(center)
+        }
+        this.categoryCenters = centers
+
+        if (this.activePointer) {
+          this.drawBarAxisPointer()
+          this.drawBarTooltipBox()
+        }
         this.ctx.draw()
       } catch (error) {
         console.error('绘制柱状图失败:', error)
@@ -291,58 +330,248 @@ export default {
         this.ctx.stroke()
       }
     },
+    shouldShowTooltipContent(option : any) : boolean {
+      const tooltip = option && option.tooltip ? option.tooltip : {}
+      return tooltip.show !== false && tooltip.showContent !== false
+    },
+    shouldShowAxisPointer(option : any) : boolean {
+      const axisPointer = option && option.tooltip && option.tooltip.axisPointer ? option.tooltip.axisPointer : {}
+      return axisPointer.show !== false
+    },
+    measureTextWidth(text : string, fontSize : number = 12) : number {
+      if (!this.ctx || typeof this.ctx.measureText !== 'function') {
+        return String(text).length * fontSize * 0.6
+      }
+      this.ctx.setFontSize(fontSize)
+      return this.ctx.measureText(String(text)).width || (String(text).length * fontSize * 0.6)
+    },
+    formatNumber(value : any, digits : number = 2) : string {
+      const n = Number(value)
+      if (!isFinite(n)) return '--'
+      return n.toFixed(digits)
+    },
+    isInPlot(x : number, y : number) : boolean {
+      const g = this.plotGrid
+      return !!g && x >= g.left && x <= g.left + g.width && y >= g.top && y <= g.top + g.height
+    },
+    findCategoryIndexByX(x : number) : number {
+      if (!this.categoryCenters.length) return -1
+      let best = 0
+      let bestDist = Infinity
+      this.categoryCenters.forEach((cx : number, i : number) => {
+        const d = Math.abs(cx - x)
+        if (d < bestDist) {
+          bestDist = d
+          best = i
+        }
+      })
+      return best
+    },
+    hitBar(x : number, y : number) : any {
+      for (let s = this.seriesData.length - 1; s >= 0; s--) {
+        const series = this.seriesData[s]
+        const points = series.points || []
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i]
+          const width = p.width || 0
+          const height = p.height || 0
+          if (x >= p.x && x <= p.x + width && y >= p.y && y <= p.y + height) {
+            return { series, point: p, dataIndex: i }
+          }
+        }
+      }
+      return null
+    },
+    buildBarPointerPayload(touchX : number, touchY : number) : any {
+      if (!this.seriesData.length) return null
+      const direct = this.hitBar(touchX, touchY)
+      let dataIndex = direct ? direct.dataIndex : -1
+      if (dataIndex < 0) {
+        if (!this.isInPlot(touchX, touchY)) return null
+        dataIndex = this.findCategoryIndexByX(touchX)
+      }
+      if (dataIndex < 0) return null
+
+      const seriesValues = [] as any[]
+      let primary = null as any
+      this.seriesData.forEach((series : any) => {
+        const point = series.points && series.points[dataIndex] ? series.points[dataIndex] : null
+        if (!point) return
+        const centerX = point.x + (point.width || 0) / 2
+        const item = {
+          seriesName: series.name,
+          value: point.value,
+          color: point.color || series.color,
+          x: centerX,
+          y: point.y,
+          name: point.name,
+          dataIndex
+        }
+        seriesValues.push({
+          seriesName: item.seriesName,
+          value: item.value,
+          color: item.color
+        })
+        if (!primary) primary = item
+        if (direct && series === direct.series) {
+          primary = item
+        }
+      })
+      if (!primary) return null
+      return {
+        componentType: 'series',
+        seriesType: 'bar',
+        seriesName: primary.seriesName,
+        name: primary.name,
+        dataIndex,
+        value: primary.value,
+        color: primary.color,
+        seriesValues,
+        x: primary.x,
+        y: primary.y,
+        event: {
+          offsetX: primary.x,
+          offsetY: primary.y
+        }
+      }
+    },
+    getBarTooltipLines(pointer : any) : any[] {
+      const lines = [
+        { text: String(pointer.name != null ? pointer.name : ''), color: '#f8fafc', fontSize: 12 }
+      ] as any[]
+      const seriesValues = pointer.seriesValues || []
+      seriesValues.forEach((item : any) => {
+        lines.push({
+          text: `${item.seriesName} ${this.formatNumber(item.value)}`,
+          color: item.color || '#e2e8f0',
+          fontSize: 11
+        })
+      })
+      return lines
+    },
+    drawBarAxisPointer() {
+      if (!this.activePointer || !this.ctx || !this.plotGrid) return
+      if (!this.shouldShowAxisPointer(this.option)) return
+      const axisPointer = this.option && this.option.tooltip && this.option.tooltip.axisPointer ? this.option.tooltip.axisPointer : {}
+      const lineColor = axisPointer.lineStyle && axisPointer.lineStyle.color ? axisPointer.lineStyle.color : 'rgba(71, 85, 105, 0.75)'
+      const lineWidth = axisPointer.lineStyle && axisPointer.lineStyle.width ? axisPointer.lineStyle.width : 1
+      const g = this.plotGrid
+      const x = this.activePointer.x
+      this.ctx.beginPath()
+      this.ctx.setStrokeStyle(lineColor)
+      this.ctx.setLineWidth(lineWidth)
+      this.ctx.moveTo(x, g.top)
+      this.ctx.lineTo(x, g.top + g.height)
+      this.ctx.stroke()
+      if (axisPointer.type === 'cross' || axisPointer.type === undefined) {
+        const y = this.activePointer.y
+        this.ctx.beginPath()
+        this.ctx.setStrokeStyle(lineColor)
+        this.ctx.setLineWidth(lineWidth)
+        this.ctx.moveTo(g.left, y)
+        this.ctx.lineTo(g.left + g.width, y)
+        this.ctx.stroke()
+      }
+      this.seriesData.forEach((series : any) => {
+        const point = series.points && series.points[this.activePointer.dataIndex] ? series.points[this.activePointer.dataIndex] : null
+        if (!point) return
+        const centerX = point.x + (point.width || 0) / 2
+        this.ctx.beginPath()
+        this.ctx.setFillStyle('#ffffff')
+        this.ctx.arc(centerX, point.y, 5, 0, Math.PI * 2)
+        this.ctx.fill()
+        this.ctx.beginPath()
+        this.ctx.setFillStyle(point.color || series.color || '#5470c6')
+        this.ctx.arc(centerX, point.y, 3.5, 0, Math.PI * 2)
+        this.ctx.fill()
+      })
+    },
+    drawBarTooltipBox() {
+      if (!this.activePointer || !this.ctx) return
+      if (!this.shouldShowTooltipContent(this.option)) return
+      const pointer = this.activePointer
+      const lines = this.getBarTooltipLines(pointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(line.text, line.fontSize || 11))
+        boxHeight += (line.fontSize || 11) + lineGap
+      })
+      boxWidth += paddingX * 2
+      let boxX = (pointer.x || 0) + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = (pointer.x || 0) - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, (pointer.y || 0) - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
+      this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+      this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
+      this.ctx.setLineWidth(tooltip.borderWidth || 1)
+      this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        this.ctx.setFontSize(line.fontSize || 11)
+        this.ctx.setFillStyle(line.color || (tooltip.textStyle && tooltip.textStyle.color) || '#e2e8f0')
+        this.ctx.setTextAlign('left')
+        this.ctx.setTextBaseline('top')
+        this.ctx.fillText(line.text, boxX + paddingX, currentY)
+        currentY += (line.fontSize || 11) + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any {
+      if (!this.seriesData.length) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildBarPointerPayload(touchX, touchY)
+      if (!pointer) {
+        return this.activePointer
+      }
+      this.touchInfo.lastX = touchX
+      this.touchInfo.lastY = touchY
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart(this.option)
+      return pointer
+    },
     handleTouchStart(event : any) {
       const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
-      if (touch) {
-        this.touchInfo.startX = touch.x || 0
-        this.touchInfo.startY = touch.y || 0
-      }
+      if (!touch) return
+      this.touchInfo.startX = touch.x || 0
+      this.touchInfo.startY = touch.y || 0
+      this.touchInfo.lastX = this.touchInfo.startX
+      this.touchInfo.lastY = this.touchInfo.startY
+      this.updateActivePointer(this.touchInfo.startX, this.touchInfo.startY, true)
     },
     handleTouchMove(event : any) {
       if (event && typeof event.preventDefault === 'function') {
         event.preventDefault()
       }
+      const touch = event.touches && event.touches.length > 0 ? event.touches[0] : null
+      if (!touch) return
+      this.updateActivePointer(touch.x || 0, touch.y || 0, true)
     },
     handleTouchEnd(event : any) {
       const touch = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] : null
-      if (!touch) {
-        return
-      }
+      if (!touch) return
       const endX = touch.x || 0
       const endY = touch.y || 0
-      if (Math.abs(endX - this.touchInfo.startX) < 5 && Math.abs(endY - this.touchInfo.startY) < 5) {
-        this.handleChartClick(endX, endY)
-      }
-    },
-    handleChartClick(x : number, y : number) {
-      let closestPoint = null as any
-      this.seriesData.forEach((series : any) => {
-        series.points.forEach((point : any) => {
-          if (x >= point.x && x <= point.x + point.width && y >= point.y && y <= point.y + point.height) {
-            closestPoint = {
-              seriesName: series.name,
-              name: point.name,
-              value: point.value,
-              color: point.color,
-              x: point.x + point.width / 2,
-              y: point.y
-            }
-          }
-        })
-      })
-      if (closestPoint) {
-        this.$emit('click', {
-          componentType: 'series',
-          seriesType: 'bar',
-          seriesName: closestPoint.seriesName,
-          name: closestPoint.name,
-          value: closestPoint.value,
-          color: closestPoint.color,
-          event: {
-            offsetX: closestPoint.x,
-            offsetY: closestPoint.y
-          }
-        })
+      const pointer = this.updateActivePointer(endX, endY, true) || this.activePointer
+      const moved =
+        Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
+        Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
+      if (!moved && pointer) {
+        this.$emit('click', pointer)
       }
     },
     setOption(option : any, notMerge : boolean = false) {

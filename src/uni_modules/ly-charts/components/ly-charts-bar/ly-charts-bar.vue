@@ -43,11 +43,17 @@ const canvasHeight = ref(0);
 const grid = ref({ top: 10, right: 20, bottom: 25, left: 50 });
 // 存储系列数据用于事件处理
 const seriesData = ref([]);
+const activePointer = ref(null);
+const plotGrid = ref(null);
+const categoryCenters = ref([]);
 // 触摸相关信息
 const touchInfo = ref({
   startX: 0,
-  startY: 0
+  startY: 0,
+  lastX: 0,
+  lastY: 0
 });
+const TAP_SLOP = 8;
 
 // 计算属性
 const containerHeight = computed(() => {
@@ -59,7 +65,7 @@ const containerWidth = computed(() => {
 });
 
 // 定义emit
-const emit = defineEmits(['click']);
+const emit = defineEmits(['click', 'tooltipShow']);
 
 /**
  * 初始化画布
@@ -166,6 +172,39 @@ const drawChart = (option) => {
     
     // 绘制柱状图
     drawBars(series, xAxisData, minY, maxY, chartHelper.adjustedYMin, chartHelper.adjustedYMax, xAxisPadding);
+
+    const chartWidth = canvasWidth.value - grid.value.left - grid.value.right;
+    const chartHeight = canvasHeight.value - grid.value.top - grid.value.bottom;
+    plotGrid.value = {
+      left: grid.value.left,
+      top: grid.value.top,
+      width: chartWidth,
+      height: chartHeight
+    };
+
+    // 使用各分类下第一根柱子的中心作为命中基准
+    const centers = [];
+    const categoryCount = (xAxisData || []).length;
+    for (let i = 0; i < categoryCount; i++) {
+      let center = null;
+      for (const series of seriesData.value) {
+        const point = series.points?.[i];
+        if (!point) continue;
+        center = point.x + (point.barWidth || 20) / 2;
+        break;
+      }
+      if (center == null) {
+        const paddedChartWidth = chartWidth - 2 * xAxisPadding;
+        center = grid.value.left + xAxisPadding + (categoryCount > 1 ? (i / (categoryCount - 1)) * paddedChartWidth : paddedChartWidth / 2);
+      }
+      centers.push(center);
+    }
+    categoryCenters.value = centers;
+
+    if (activePointer.value) {
+      drawBarAxisPointer();
+      drawBarTooltipBox();
+    }
     
     // 绘制到画布
     ctx.value.draw();
@@ -804,6 +843,247 @@ const drawBars = (series, xAxisData, minY, maxY, adjustedYMin, adjustedYMax, xAx
   });
 };
 
+const shouldShowTooltipContent = (option) => {
+  const tooltip = option?.tooltip || {};
+  return tooltip.show !== false && tooltip.showContent !== false;
+};
+
+const shouldShowAxisPointer = (option) => {
+  const axisPointer = option?.tooltip?.axisPointer || {};
+  return axisPointer.show !== false;
+};
+
+const measureTextWidth = (text, fontSize = 12) => {
+  if (!ctx.value || typeof ctx.value.measureText !== 'function') {
+    return String(text).length * fontSize * 0.6;
+  }
+  ctx.value.setFontSize(fontSize);
+  return ctx.value.measureText(String(text)).width || (String(text).length * fontSize * 0.6);
+};
+
+const formatNumber = (value, digits = 2) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '--';
+  return n.toFixed(digits);
+};
+
+const isInPlot = (x, y) => {
+  const g = plotGrid.value;
+  return !!g && x >= g.left && x <= g.left + g.width && y >= g.top && y <= g.top + g.height;
+};
+
+const findCategoryIndexByX = (x) => {
+  if (!categoryCenters.value.length) return -1;
+  let best = 0;
+  let bestDist = Infinity;
+  categoryCenters.value.forEach((cx, i) => {
+    const d = Math.abs(cx - x);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  });
+  return best;
+};
+
+const hitBar = (x, y) => {
+  for (let s = seriesData.value.length - 1; s >= 0; s--) {
+    const series = seriesData.value[s];
+    const points = series.points || [];
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      const barWidth = p.barWidth || 20;
+      const top = Math.min(p.y, p.zeroY);
+      const bottom = Math.max(p.y, p.zeroY);
+      if (x >= p.x && x <= p.x + barWidth && y >= top && y <= bottom) {
+        return { series, point: p, dataIndex: i };
+      }
+    }
+  }
+  return null;
+};
+
+const buildBarPointerPayload = (touchX, touchY) => {
+  if (!seriesData.value.length) return null;
+  const direct = hitBar(touchX, touchY);
+  let dataIndex = direct ? direct.dataIndex : -1;
+  if (dataIndex < 0) {
+    if (!isInPlot(touchX, touchY)) return null;
+    dataIndex = findCategoryIndexByX(touchX);
+  }
+  if (dataIndex < 0) return null;
+
+  const seriesValues = [];
+  let primary = null;
+  seriesData.value.forEach((series) => {
+    const point = series.points?.[dataIndex];
+    if (!point) return;
+    const centerX = point.x + (point.barWidth || 20) / 2;
+    const item = {
+      seriesName: series.name,
+      value: point.value,
+      color: point.color || series.color,
+      x: centerX,
+      y: point.y,
+      name: point.name,
+      dataIndex,
+      barWidth: point.barWidth || 20,
+      zeroY: point.zeroY
+    };
+    seriesValues.push({
+      seriesName: item.seriesName,
+      value: item.value,
+      color: item.color
+    });
+    if (!primary) primary = item;
+    if (direct && series === direct.series) {
+      primary = item;
+    }
+  });
+  if (!primary) return null;
+  return {
+    componentType: 'series',
+    seriesType: 'bar',
+    seriesName: primary.seriesName,
+    name: primary.name,
+    dataIndex,
+    value: primary.value,
+    color: primary.color,
+    seriesValues,
+    x: primary.x,
+    y: primary.y,
+    event: {
+      offsetX: primary.x,
+      offsetY: primary.y
+    }
+  };
+};
+
+const getBarTooltipLines = (pointer) => {
+  const lines = [
+    { text: String(pointer.name ?? ''), color: '#f8fafc', fontSize: 12 }
+  ];
+  (pointer.seriesValues || []).forEach((item) => {
+    lines.push({
+      text: `${item.seriesName} ${formatNumber(item.value)}`,
+      color: item.color || '#e2e8f0',
+      fontSize: 11
+    });
+  });
+  return lines;
+};
+
+const drawBarAxisPointer = () => {
+  if (!activePointer.value || !ctx.value || !plotGrid.value) return;
+  if (!shouldShowAxisPointer(props.option)) return;
+
+  const axisPointer = props.option?.tooltip?.axisPointer || {};
+  const lineColor = axisPointer.lineStyle?.color || 'rgba(71, 85, 105, 0.75)';
+  const lineWidth = axisPointer.lineStyle?.width || 1;
+  const g = plotGrid.value;
+  const x = activePointer.value.x;
+
+  ctx.value.beginPath();
+  ctx.value.setStrokeStyle(lineColor);
+  ctx.value.setLineWidth(lineWidth);
+  ctx.value.moveTo(x, g.top);
+  ctx.value.lineTo(x, g.top + g.height);
+  ctx.value.stroke();
+
+  if (axisPointer.type === 'cross' || axisPointer.type === undefined) {
+    const y = activePointer.value.y;
+    ctx.value.beginPath();
+    ctx.value.setStrokeStyle(lineColor);
+    ctx.value.setLineWidth(lineWidth);
+    ctx.value.moveTo(g.left, y);
+    ctx.value.lineTo(g.left + g.width, y);
+    ctx.value.stroke();
+  }
+
+  // 强调当前分类下的柱顶
+  seriesData.value.forEach((series) => {
+    const point = series.points?.[activePointer.value.dataIndex];
+    if (!point) return;
+    const centerX = point.x + (point.barWidth || 20) / 2;
+    ctx.value.beginPath();
+    ctx.value.setFillStyle('#ffffff');
+    ctx.value.arc(centerX, point.y, 5, 0, Math.PI * 2);
+    ctx.value.fill();
+    ctx.value.beginPath();
+    ctx.value.setFillStyle(point.color || series.color || '#5470c6');
+    ctx.value.arc(centerX, point.y, 3.5, 0, Math.PI * 2);
+    ctx.value.fill();
+  });
+};
+
+const drawBarTooltipBox = () => {
+  if (!activePointer.value || !ctx.value) return;
+  if (!shouldShowTooltipContent(props.option)) return;
+
+  const pointer = activePointer.value;
+  const lines = getBarTooltipLines(pointer);
+  const paddingX = 10;
+  const paddingY = 8;
+  const lineGap = 6;
+  let boxWidth = 0;
+  let boxHeight = paddingY * 2 - lineGap;
+  lines.forEach((line) => {
+    boxWidth = Math.max(boxWidth, measureTextWidth(line.text, line.fontSize || 11));
+    boxHeight += (line.fontSize || 11) + lineGap;
+  });
+  boxWidth += paddingX * 2;
+
+  let boxX = (pointer.x || 0) + 12;
+  if (boxX + boxWidth > canvasWidth.value - 8) {
+    boxX = (pointer.x || 0) - boxWidth - 12;
+  }
+  boxX = Math.max(8, boxX);
+  let boxY = Math.max(8, (pointer.y || 0) - boxHeight - 12);
+  if (boxY + boxHeight > canvasHeight.value - 8) {
+    boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
+  }
+
+  const tooltip = props.option?.tooltip || {};
+  ctx.value.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
+  ctx.value.fillRect(boxX, boxY, boxWidth, boxHeight);
+  ctx.value.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
+  ctx.value.setLineWidth(tooltip.borderWidth || 1);
+  ctx.value.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+  let currentY = boxY + paddingY;
+  lines.forEach((line) => {
+    ctx.value.setFontSize(line.fontSize || 11);
+    ctx.value.setFillStyle(line.color || tooltip.textStyle?.color || '#e2e8f0');
+    ctx.value.setTextAlign('left');
+    ctx.value.setTextBaseline('top');
+    ctx.value.fillText(line.text, boxX + paddingX, currentY);
+    currentY += (line.fontSize || 11) + lineGap;
+  });
+};
+
+const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
+  if (!seriesData.value.length) {
+    activePointer.value = null;
+    return null;
+  }
+  // 直接命中柱体时允许；否则仅在 plot 内按分类回退
+  const pointer = buildBarPointerPayload(touchX, touchY);
+  if (!pointer) {
+    if (!isInPlot(touchX, touchY)) {
+      return activePointer.value;
+    }
+    return activePointer.value;
+  }
+  touchInfo.value.lastX = touchX;
+  touchInfo.value.lastY = touchY;
+  activePointer.value = pointer;
+  if (emitTooltip) {
+    emit('tooltipShow', pointer);
+  }
+  drawChart(props.option);
+  return pointer;
+};
+
 /**
  * 处理触摸开始事件
  * @param {Object} e - 事件对象
@@ -811,11 +1091,13 @@ const drawBars = (series, xAxisData, minY, maxY, adjustedYMin, adjustedYMax, xAx
  * @created 2025-07-28
  */
 const handleTouchStart = (e) => {
-  if (e.touches && e.touches.length > 0) {
-    const touch = e.touches[0];
-    touchInfo.value.startX = touch.x || 0;
-    touchInfo.value.startY = touch.y || 0;
-  }
+  const touch = e.touches && e.touches[0];
+  if (!touch) return;
+  touchInfo.value.startX = touch.x || 0;
+  touchInfo.value.startY = touch.y || 0;
+  touchInfo.value.lastX = touchInfo.value.startX;
+  touchInfo.value.lastY = touchInfo.value.startY;
+  updateActivePointer(touchInfo.value.startX, touchInfo.value.startY, true);
 };
 
 /**
@@ -825,8 +1107,10 @@ const handleTouchStart = (e) => {
  * @created 2025-07-28
  */
 const handleTouchMove = (e) => {
-  // 阻止默认行为，避免页面滚动
   e.preventDefault && e.preventDefault();
+  const touch = e.touches && e.touches[0];
+  if (!touch) return;
+  updateActivePointer(touch.x || 0, touch.y || 0, true);
 };
 
 /**
@@ -836,69 +1120,16 @@ const handleTouchMove = (e) => {
  * @created 2025-07-28
  */
 const handleTouchEnd = (e) => {
-  if (e.changedTouches && e.changedTouches.length > 0) {
-    const touch = e.changedTouches[0];
-    const endX = touch.x || 0;
-    const endY = touch.y || 0;
-    
-    // 判断是否为点击事件
-    const deltaX = Math.abs(endX - touchInfo.value.startX);
-    const deltaY = Math.abs(endY - touchInfo.value.startY);
-    
-    if (deltaX < 5 && deltaY < 5) {
-      handleChartClick(endX, endY);
-    }
-  }
-};
-
-/**
- * 处理图表点击事件
- * @param {Number} x - 点击的x坐标
- * @param {Number} y - 点击的y坐标
- * @author jry <ijry@qq.com>
- * @created 2025-07-28
- */
-const handleChartClick = (x, y) => {
-  // 查找最近的数据点
-  let minDistance = Infinity;
-  let closestPoint = null;
-  
-  seriesData.value.forEach(series => {
-    series.points.forEach(point => {
-      // 修改: 使用实际的柱子宽度进行点击检测
-      const barWidth = point.barWidth || 20;
-      if (x >= point.x && x <= point.x + barWidth && 
-          y >= Math.min(point.y, point.zeroY) && y <= Math.min(point.y, point.zeroY) + point.barHeight) {
-        const distance = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
-        if (distance < minDistance) {
-          minDistance = distance;
-          closestPoint = {
-            seriesName: series.name,
-            name: point.name,
-            value: point.value,
-            color: series.color,
-            x: point.x,
-            y: point.y
-          };
-        }
-      }
-    });
-  });
-  
-  if (closestPoint) {
-    // 触发点击事件
-    emit('click', {
-      componentType: 'series',
-      seriesType: 'bar',
-      seriesName: closestPoint.seriesName,
-      name: closestPoint.name,
-      value: closestPoint.value,
-      color: closestPoint.color,
-      event: {
-        offsetX: closestPoint.x,
-        offsetY: closestPoint.y
-      }
-    });
+  const touch = e.changedTouches && e.changedTouches[0];
+  if (!touch) return;
+  const endX = touch.x || 0;
+  const endY = touch.y || 0;
+  const pointer = updateActivePointer(endX, endY, true) || activePointer.value;
+  const moved =
+    Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
+    Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
+  if (!moved && pointer) {
+    emit('click', pointer);
   }
 };
 

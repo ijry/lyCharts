@@ -23,6 +23,7 @@ interface LyBarCanvasRef {
   clearRect(x : number, y : number, width : number, height : number) : void
   setFillStyle(color : string) : void
   fillRect(x : number, y : number, width : number, height : number) : void
+  strokeRect(x : number, y : number, width : number, height : number) : void
   setStrokeStyle(color : string) : void
   setLineWidth(width : number) : void
   beginPath() : void
@@ -36,6 +37,7 @@ interface LyBarCanvasRef {
   setTextAlign(align : string) : void
   setTextBaseline(baseline : string) : void
   fillText(text : string, x : number, y : number) : void
+  measureText(text : string) : any
   save() : void
   translate(x : number, y : number) : void
   rotate(angle : number) : void
@@ -48,6 +50,7 @@ import chartHelper from '../../libs/uvue/chartHelper.uts'
 
 export default {
   name: 'ly-charts-bar',
+  emits: ['click', 'tooltipShow'],
   props: {
     option: {
       type: Object,
@@ -70,10 +73,16 @@ export default {
       canvasHeight: 0,
       grid: { top: 10, right: 20, bottom: 25, left: 50 },
       seriesData: [] as any[],
+      activePointer: null as UTSJSONObject | null,
+      plotGrid: null as UTSJSONObject | null,
+      categoryCenters: [] as number[],
       touchInfo: {
         startX: 0,
-        startY: 0
-      }
+        startY: 0,
+        lastX: 0,
+        lastY: 0
+      },
+      TAP_SLOP: 8
     }
   },
   computed: {
@@ -236,6 +245,49 @@ export default {
         }
         chartHelper.drawAxis(ctx, this.grid, this.canvasWidth, this.canvasHeight, xAxisData, minY, maxY, xAxis, yAxis, 'bar', xAxisPadding)
         this.drawBars(series, xAxisData, minY, maxY, chartHelper.adjustedYMin, chartHelper.adjustedYMax, xAxisPadding)
+
+        const gridObjectForPlot = this.grid as UTSJSONObject
+        const gridLeft = gridObjectForPlot.get('left') as number
+        const gridRight = gridObjectForPlot.get('right') as number
+        const gridTop = gridObjectForPlot.get('top') as number
+        const gridBottom = gridObjectForPlot.get('bottom') as number
+        const chartWidth = this.canvasWidth - gridLeft - gridRight
+        const chartHeight = this.canvasHeight - gridTop - gridBottom
+        this.plotGrid = {
+          left: gridLeft,
+          top: gridTop,
+          width: chartWidth,
+          height: chartHeight
+        } as UTSJSONObject
+        const centers = [] as number[]
+        const categoryCount = xAxisData.length
+        for (let i = 0; i < categoryCount; i++) {
+          let center : number | null = null
+          for (let s = 0; s < this.seriesData.length; s++) {
+            const seriesObject = this.seriesData[s] as UTSJSONObject
+            const pointsValue = seriesObject.get('points')
+            const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
+            if (i >= points.length) {
+              continue
+            }
+            const pointObject = points[i] as UTSJSONObject
+            const px = pointObject.get('x') as number
+            const pw = pointObject.get('width') as number
+            center = px + pw / 2
+            break
+          }
+          if (center == null) {
+            const paddedChartWidth = chartWidth - 2 * xAxisPadding
+            center = gridLeft + xAxisPadding + (categoryCount > 1 ? (i / (categoryCount - 1)) * paddedChartWidth : paddedChartWidth / 2)
+          }
+          centers.push(center)
+        }
+        this.categoryCenters = centers
+
+        if (this.activePointer != null) {
+          this.drawBarAxisPointer()
+          this.drawBarTooltipBox()
+        }
         ctx.$callMethod('draw')
       } catch (error) {
         console.error('绘制柱状图失败:', error)
@@ -368,94 +420,423 @@ export default {
         ctx.$callMethod('stroke')
       }
     },
-    handleTouchStart(event : any) {
-      const eventObject = event as UTSJSONObject
-      const touchesValue = eventObject.get('touches')
-      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
-      const touch = touches.length > 0 ? touches[0] : null
-      if (touch != null) {
-        const touchObject = touch as UTSJSONObject
-        const touchX = touchObject.get('x')
-        const touchY = touchObject.get('y')
-        const touchInfoObject = this.touchInfo as UTSJSONObject
-        touchInfoObject.set('startX', typeof touchX === 'number' ? touchX : 0)
-        touchInfoObject.set('startY', typeof touchY === 'number' ? touchY : 0)
-      }
+    shouldShowTooltipContent(option : any) : boolean {
+      const optionObject = (option != null ? option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      return tooltip.get('show') != false && tooltip.get('showContent') != false
     },
-    handleTouchMove(event : any) {
+    shouldShowAxisPointer(option : any) : boolean {
+      const optionObject = (option != null ? option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const axisPointerValue = tooltip.get('axisPointer')
+      const axisPointer = (axisPointerValue != null ? axisPointerValue : {}) as UTSJSONObject
+      return axisPointer.get('show') != false
     },
-    handleTouchEnd(event : any) {
-      const eventObject = event as UTSJSONObject
-      const changedTouchesValue = eventObject.get('changedTouches')
-      const changedTouches = Array.isArray(changedTouchesValue) ? changedTouchesValue : [] as any[]
-      const touch = changedTouches.length > 0 ? changedTouches[0] : null
-      if (touch == null) {
-        return
+    measureTextWidth(text : any, fontSize : number = 12) : number {
+      const textValue = `${text}`
+      if (this.ctx == null) {
+        return textValue.length * fontSize * 0.6
       }
-      const touchObject = touch as UTSJSONObject
-      const touchX = touchObject.get('x')
-      const touchY = touchObject.get('y')
-      const endX = typeof touchX === 'number' ? touchX : 0
-      const endY = typeof touchY === 'number' ? touchY : 0
-      const touchInfoObject = this.touchInfo as UTSJSONObject
-      const startXValue = touchInfoObject.get('startX')
-      const startYValue = touchInfoObject.get('startY')
-      const startX = typeof startXValue === 'number' ? startXValue : 0
-      const startY = typeof startYValue === 'number' ? startYValue : 0
-      if (Math.abs(endX - startX) < 5 && Math.abs(endY - startY) < 5) {
-        this.handleChartClick(endX, endY)
-      }
+      this.ctx.$callMethod('setFontSize', fontSize)
+      const measuredResult = this.ctx.$callMethod('measureText', textValue) as TextMetrics | null
+      const measuredWidth = measuredResult != null ? measuredResult.width : 0
+      return measuredWidth > 0 ? measuredWidth : (textValue.length * fontSize * 0.6)
     },
-    handleChartClick(x : number, y : number) {
-      let closestPoint = null as UTSJSONObject | null
-      let closestSeries = null as UTSJSONObject | null
-      let closestX = 0
-      let closestY = 0
+    formatNumber(value : any, digits : number = 2) : string {
+      if (value == null) {
+        return '--'
+      }
+      const n = typeof value == 'number' ? value : parseFloat(`${value}`)
+      if (typeof n != 'number' || isNaN(n)) {
+        return '--'
+      }
+      return n.toFixed(digits)
+    },
+    isInPlot(x : number, y : number) : boolean {
+      const g = this.plotGrid
+      if (g == null) {
+        return false
+      }
+      const left = g.get('left') as number
+      const top = g.get('top') as number
+      const width = g.get('width') as number
+      const height = g.get('height') as number
+      return x >= left && x <= left + width && y >= top && y <= top + height
+    },
+    findCategoryIndexByX(x : number) : number {
+      if (this.categoryCenters.length == 0) {
+        return -1
+      }
+      let best = 0
+      let bestDist = Number.MAX_VALUE
+      this.categoryCenters.forEach((cx : number, i : number) => {
+        const d = Math.abs(cx - x)
+        if (d < bestDist) {
+          bestDist = d
+          best = i
+        }
+      })
+      return best
+    },
+    hitBar(x : number, y : number) : UTSJSONObject | null {
+      for (let s = this.seriesData.length - 1; s >= 0; s--) {
+        const seriesObject = this.seriesData[s] as UTSJSONObject
+        const pointsValue = seriesObject.get('points')
+        const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
+        for (let i = 0; i < points.length; i++) {
+          const pointObject = points[i] as UTSJSONObject
+          const px = pointObject.get('x') as number
+          const py = pointObject.get('y') as number
+          const pw = pointObject.get('width') as number
+          const ph = pointObject.get('height') as number
+          if (x >= px && x <= px + pw && y >= py && y <= py + ph) {
+            return {
+              series: seriesObject,
+              point: pointObject,
+              dataIndex: i
+            } as UTSJSONObject
+          }
+        }
+      }
+      return null
+    },
+    buildBarPointerPayload(touchX : number, touchY : number) : UTSJSONObject | null {
+      if (this.seriesData.length == 0) {
+        return null
+      }
+      const direct = this.hitBar(touchX, touchY)
+      let dataIndex = -1
+      let directSeries : any | null = null
+      if (direct != null) {
+        dataIndex = direct.get('dataIndex') as number
+        directSeries = direct.get('series')
+      } else {
+        if (!this.isInPlot(touchX, touchY)) {
+          return null
+        }
+        dataIndex = this.findCategoryIndexByX(touchX)
+      }
+      if (dataIndex < 0) {
+        return null
+      }
+
+      const seriesValues = [] as any[]
+      let primary = null as UTSJSONObject | null
       this.seriesData.forEach((series : any) => {
         const seriesObject = series as UTSJSONObject
         const pointsValue = seriesObject.get('points')
         const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
-        points.forEach((point : any) => {
-          const pointObject = point as UTSJSONObject
-          const pointXValue = pointObject.get('x')
-          const pointYValue = pointObject.get('y')
-          const pointWidthValue = pointObject.get('width')
-          const pointHeightValue = pointObject.get('height')
-          const pointX = typeof pointXValue === 'number' ? pointXValue : 0
-          const pointY = typeof pointYValue === 'number' ? pointYValue : 0
-          const pointWidth = typeof pointWidthValue === 'number' ? pointWidthValue : 0
-          const pointHeight = typeof pointHeightValue === 'number' ? pointHeightValue : 0
-          if (x >= pointX && x <= pointX + pointWidth && y >= pointY && y <= pointY + pointHeight) {
-            closestPoint = pointObject
-            closestSeries = seriesObject
-            closestX = pointX + pointWidth / 2
-            closestY = pointY
-          }
-        })
-      })
-      if (closestPoint != null && closestSeries != null) {
-        const closestPointObject = closestPoint as UTSJSONObject
-        const closestSeriesObject = closestSeries as UTSJSONObject
-        const seriesNameValue = closestSeriesObject.get('name')
-        const nameValue = closestPointObject.get('name')
-        const pointValue = closestPointObject.get('value')
-        const colorValue = closestPointObject.get('color')
-        const seriesName = seriesNameValue != null && `${seriesNameValue}` !== '' ? `${seriesNameValue}` : ''
-        const name = nameValue != null && `${nameValue}` !== '' ? `${nameValue}` : ''
-        const value = typeof pointValue === 'number' ? pointValue : 0
-        const color = colorValue != null && `${colorValue}` !== '' ? `${colorValue}` : ''
-        this.$emit('click', {
-          componentType: 'series',
-          seriesType: 'bar',
+        if (dataIndex >= points.length) {
+          return
+        }
+        const pointObject = points[dataIndex] as UTSJSONObject
+        const seriesNameValue = seriesObject.get('name')
+        const seriesName = seriesNameValue != null && `${seriesNameValue}` != '' ? `${seriesNameValue}` : ''
+        const colorValue = pointObject.get('color') != null ? pointObject.get('color') : seriesObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : ''
+        const px = pointObject.get('x') as number
+        const py = pointObject.get('y') as number
+        const pw = pointObject.get('width') as number
+        const centerX = px + pw / 2
+        const nameValue = pointObject.get('name')
+        const name = nameValue != null && `${nameValue}` != '' ? `${nameValue}` : `${dataIndex}`
+        const value = pointObject.get('value')
+        seriesValues.push({
           seriesName,
-          name,
+          value,
+          color
+        })
+        const item = {
+          seriesName,
           value,
           color,
-          event: {
-            offsetX: closestX,
-            offsetY: closestY
-          }
+          x: centerX,
+          y: py,
+          name,
+          dataIndex
+        } as UTSJSONObject
+        if (primary == null) {
+          primary = item
+        }
+        if (directSeries != null && seriesObject == directSeries) {
+          primary = item
+        }
+      })
+      if (primary == null) {
+        return null
+      }
+      const primaryObject = primary as UTSJSONObject
+      return {
+        componentType: 'series',
+        seriesType: 'bar',
+        seriesName: primaryObject.get('seriesName'),
+        name: primaryObject.get('name'),
+        dataIndex,
+        value: primaryObject.get('value'),
+        color: primaryObject.get('color'),
+        seriesValues,
+        x: primaryObject.get('x'),
+        y: primaryObject.get('y'),
+        event: {
+          offsetX: primaryObject.get('x'),
+          offsetY: primaryObject.get('y')
+        }
+      } as UTSJSONObject
+    },
+    getBarTooltipLines(pointer : any) : any[] {
+      const pointerObject = pointer as UTSJSONObject
+      const nameValue = pointerObject.get('name')
+      const lines = [
+        {
+          text: nameValue != null ? `${nameValue}` : '',
+          color: '#f8fafc',
+          fontSize: 12
+        }
+      ] as any[]
+      const seriesValuesValue = pointerObject.get('seriesValues')
+      const seriesValues = Array.isArray(seriesValuesValue) ? seriesValuesValue : [] as any[]
+      seriesValues.forEach((item : any) => {
+        const itemObject = item as UTSJSONObject
+        const seriesNameValue = itemObject.get('seriesName')
+        const seriesName = seriesNameValue != null ? `${seriesNameValue}` : ''
+        const colorValue = itemObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#e2e8f0'
+        lines.push({
+          text: `${seriesName} ${this.formatNumber(itemObject.get('value'))}`,
+          color,
+          fontSize: 11
         })
+      })
+      return lines
+    },
+    drawBarAxisPointer() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      const plotGrid = this.plotGrid
+      if (ctx == null || activePointer == null || plotGrid == null) {
+        return
+      }
+      if (!this.shouldShowAxisPointer(this.option)) {
+        return
+      }
+      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const axisPointerValue = tooltip.get('axisPointer')
+      const axisPointer = (axisPointerValue != null ? axisPointerValue : {}) as UTSJSONObject
+      const lineStyleValue = axisPointer.get('lineStyle')
+      const lineStyle = (lineStyleValue != null ? lineStyleValue : {}) as UTSJSONObject
+      const lineColorValue = lineStyle.get('color')
+      const lineWidthValue = lineStyle.get('width')
+      const lineColor = lineColorValue != null && `${lineColorValue}` != '' ? `${lineColorValue}` : 'rgba(71, 85, 105, 0.75)'
+      const lineWidth = typeof lineWidthValue == 'number' ? lineWidthValue : 1
+      const left = plotGrid.get('left') as number
+      const top = plotGrid.get('top') as number
+      const width = plotGrid.get('width') as number
+      const height = plotGrid.get('height') as number
+      const pointerObject = activePointer as UTSJSONObject
+      const x = pointerObject.get('x') as number
+      const y = pointerObject.get('y') as number
+      const dataIndex = pointerObject.get('dataIndex') as number
+
+      ctx.$callMethod('beginPath')
+      ctx.$callMethod('setStrokeStyle', lineColor)
+      ctx.$callMethod('setLineWidth', lineWidth)
+      ctx.$callMethod('moveTo', x, top)
+      ctx.$callMethod('lineTo', x, top + height)
+      ctx.$callMethod('stroke')
+
+      const axisType = axisPointer.get('type')
+      if (axisType == 'cross' || axisType == null) {
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('setStrokeStyle', lineColor)
+        ctx.$callMethod('setLineWidth', lineWidth)
+        ctx.$callMethod('moveTo', left, y)
+        ctx.$callMethod('lineTo', left + width, y)
+        ctx.$callMethod('stroke')
+      }
+
+      this.seriesData.forEach((series : any) => {
+        const seriesObject = series as UTSJSONObject
+        const pointsValue = seriesObject.get('points')
+        const points = Array.isArray(pointsValue) ? pointsValue : [] as any[]
+        if (dataIndex < 0 || dataIndex >= points.length) {
+          return
+        }
+        const pointObject = points[dataIndex] as UTSJSONObject
+        const px = pointObject.get('x') as number
+        const py = pointObject.get('y') as number
+        const pw = pointObject.get('width') as number
+        const centerX = px + pw / 2
+        const colorValue = pointObject.get('color') != null ? pointObject.get('color') : seriesObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : '#5470c6'
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('setFillStyle', '#ffffff')
+        ctx.$callMethod('arc', centerX, py, 5, 0, Math.PI * 2, false)
+        ctx.$callMethod('fill')
+        ctx.$callMethod('beginPath')
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('arc', centerX, py, 3.5, 0, Math.PI * 2, false)
+        ctx.$callMethod('fill')
+      })
+    },
+    drawBarTooltipBox() {
+      const ctx = this.ctx
+      const activePointer = this.activePointer
+      if (ctx == null || activePointer == null) {
+        return
+      }
+      if (!this.shouldShowTooltipContent(this.option)) {
+        return
+      }
+      const pointerObject = activePointer as UTSJSONObject
+      const lines = this.getBarTooltipLines(activePointer)
+      const paddingX = 10
+      const paddingY = 8
+      const lineGap = 6
+      let boxWidth = 0
+      let boxHeight = paddingY * 2 - lineGap
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue : 11
+        const textValue = lineObject.get('text')
+        boxWidth = Math.max(boxWidth, this.measureTextWidth(textValue != null ? `${textValue}` : '', fontSize))
+        boxHeight += fontSize + lineGap
+      })
+      boxWidth += paddingX * 2
+      const pointerX = pointerObject.get('x') as number
+      const pointerY = pointerObject.get('y') as number
+      let boxX = pointerX + 12
+      if (boxX + boxWidth > this.canvasWidth - 8) {
+        boxX = pointerX - boxWidth - 12
+      }
+      boxX = Math.max(8, boxX)
+      let boxY = Math.max(8, pointerY - boxHeight - 12)
+      if (boxY + boxHeight > this.canvasHeight - 8) {
+        boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
+      }
+
+      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const tooltipValue = optionObject.get('tooltip')
+      const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
+      const backgroundColorValue = tooltip.get('backgroundColor')
+      const borderColorValue = tooltip.get('borderColor')
+      const borderWidthValue = tooltip.get('borderWidth')
+      const textStyleValue = tooltip.get('textStyle')
+      const textStyle = (textStyleValue != null ? textStyleValue : {}) as UTSJSONObject
+      const defaultTextColorValue = textStyle.get('color')
+      const backgroundColor = backgroundColorValue != null && `${backgroundColorValue}` != '' ? `${backgroundColorValue}` : 'rgba(15, 23, 42, 0.88)'
+      const borderColor = borderColorValue != null && `${borderColorValue}` != '' ? `${borderColorValue}` : 'rgba(148, 163, 184, 0.5)'
+      const borderWidth = typeof borderWidthValue == 'number' ? borderWidthValue : 1
+      const defaultTextColor = defaultTextColorValue != null && `${defaultTextColorValue}` != '' ? `${defaultTextColorValue}` : '#e2e8f0'
+
+      ctx.$callMethod('setFillStyle', backgroundColor)
+      ctx.$callMethod('fillRect', boxX, boxY, boxWidth, boxHeight)
+      ctx.$callMethod('setStrokeStyle', borderColor)
+      ctx.$callMethod('setLineWidth', borderWidth)
+      ctx.$callMethod('strokeRect', boxX, boxY, boxWidth, boxHeight)
+
+      let currentY = boxY + paddingY
+      lines.forEach((line : any) => {
+        const lineObject = line as UTSJSONObject
+        const fontSizeValue = lineObject.get('fontSize')
+        const fontSize = typeof fontSizeValue == 'number' ? fontSizeValue : 11
+        const colorValue = lineObject.get('color')
+        const color = colorValue != null && `${colorValue}` != '' ? `${colorValue}` : defaultTextColor
+        const textValue = lineObject.get('text')
+        ctx.$callMethod('setFontSize', fontSize)
+        ctx.$callMethod('setFillStyle', color)
+        ctx.$callMethod('setTextAlign', 'left')
+        ctx.$callMethod('setTextBaseline', 'top')
+        ctx.$callMethod('fillText', textValue != null ? `${textValue}` : '', boxX + paddingX, currentY)
+        currentY += fontSize + lineGap
+      })
+    },
+    updateActivePointer(touchX : number, touchY : number, emitTooltip : boolean = true) : any | null {
+      if (this.seriesData.length == 0) {
+        this.activePointer = null
+        return null
+      }
+      const pointer = this.buildBarPointerPayload(touchX, touchY)
+      if (pointer == null) {
+        return this.activePointer
+      }
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('lastX', touchX)
+      touchInfoObject.set('lastY', touchY)
+      this.activePointer = pointer
+      if (emitTooltip) {
+        this.$emit('tooltipShow', pointer)
+      }
+      this.drawChart(this.option)
+      return pointer
+    },
+    getTouchPoint(event : any) : UTSJSONObject | null {
+      if (event == null) {
+        return null
+      }
+      const eventObject = event as UTSJSONObject
+      const touchesValue = eventObject.get('touches')
+      const touches = Array.isArray(touchesValue) ? touchesValue : [] as any[]
+      if (touches.length > 0) {
+        return touches[0] as UTSJSONObject
+      }
+      const changedValue = eventObject.get('changedTouches')
+      const changed = Array.isArray(changedValue) ? changedValue : [] as any[]
+      if (changed.length > 0) {
+        return changed[0] as UTSJSONObject
+      }
+      return null
+    },
+    handleTouchStart(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX : 0
+      const y = typeof touchY == 'number' ? touchY : 0
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      touchInfoObject.set('startX', x)
+      touchInfoObject.set('startY', y)
+      touchInfoObject.set('lastX', x)
+      touchInfoObject.set('lastY', y)
+      this.updateActivePointer(x, y, true)
+    },
+    handleTouchMove(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const x = typeof touchX == 'number' ? touchX : 0
+      const y = typeof touchY == 'number' ? touchY : 0
+      this.updateActivePointer(x, y, true)
+    },
+    handleTouchEnd(event : any) {
+      const touch = this.getTouchPoint(event)
+      if (touch == null) {
+        return
+      }
+      const touchX = touch.get('x')
+      const touchY = touch.get('y')
+      const endX = typeof touchX == 'number' ? touchX : 0
+      const endY = typeof touchY == 'number' ? touchY : 0
+      const pointer = this.updateActivePointer(endX, endY, true)
+      const finalPointer = pointer != null ? pointer : this.activePointer
+      const touchInfoObject = this.touchInfo as UTSJSONObject
+      const startXValue = touchInfoObject.get('startX')
+      const startYValue = touchInfoObject.get('startY')
+      const startX = typeof startXValue == 'number' ? startXValue : 0
+      const startY = typeof startYValue == 'number' ? startYValue : 0
+      const moved = Math.abs(endX - startX) > this.TAP_SLOP || Math.abs(endY - startY) > this.TAP_SLOP
+      if (!moved && finalPointer != null) {
+        this.$emit('click', finalPointer)
       }
     },
     setOption(option : any, notMerge : boolean = false) {
