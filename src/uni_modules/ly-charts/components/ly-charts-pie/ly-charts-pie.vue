@@ -23,9 +23,9 @@
       :id="cid" 
       :canvas-id="cid" 
       :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
-      @touchstart="tap"
-      @touchmove="move"
-      @touchend="touchEnd"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
     ></canvas>
   </view>
 </template>
@@ -92,6 +92,14 @@ const canvasWidth = ref(typeof props.width === 'string' && props.width.indexOf('
 const canvasHeight = ref(typeof props.height === 'string' ? parseUnit(props.height) : props.height);
 const isMount = ref(false);
 const chartInstance = ref(null);
+const activePointer = ref(null);
+const touchInfo = ref({
+  startX: 0,
+  startY: 0,
+  lastX: 0,
+  lastY: 0
+});
+const TAP_SLOP = 8;
 
 // 获取画布尺寸
 const getCanvasSize = () => {
@@ -317,9 +325,7 @@ const drawNativePie = () => {
   if (props.option.legend && props.option.legend.show !== false) {
     drawLegend(ctx, data, defaultColors);
   }
-  
-  ctx.draw(false);
-  
+
   // 保存图表实例信息
   chartInstance.value = {
     type: 'native-pie',
@@ -330,8 +336,17 @@ const drawNativePie = () => {
     innerRadius: innerRadiusPx,
     total: total,
     sectorAngles: sectorAngles, // 保存扇形角度信息用于点击判断
+    seriesName: series.name,
+    defaultColors,
     destroy: () => {} // 空销毁函数
   };
+
+  if (activePointer.value) {
+    drawPieActiveSector(ctx);
+    drawPieTooltipBox(ctx);
+  }
+  
+  ctx.draw(false);
   // #endif
 };
 
@@ -562,65 +577,245 @@ const drawLegend = (ctx, data, defaultColors) => {
   }
 };
 
-// 点击事件
-const tap = (e) => {
-  if (chartInstance.value && chartInstance.value.type === 'native-pie') {
-    // 原生饼图点击处理
-    const { x, y } = e.touches[0];
-    const dx = x - chartInstance.value.centerX;
-    const dy = y - chartInstance.value.centerY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    
-    // 判断点击是否在饼图范围内
-    if (distance <= chartInstance.value.radius) {
-      const angle = (Math.atan2(dy, dx) + Math.PI / 2 + 2 * Math.PI) % (2 * Math.PI);
-      let cumulativeAngle = 0;
-      let clickedIndex = -1;
-      
-      // 查找点击的扇形
-      for (let i = 0; i < chartInstance.value.data.length; i++) {
-        const item = chartInstance.value.data[i];
-        const sectorAngle = (item.value / chartInstance.value.total) * 2 * Math.PI;
-        cumulativeAngle += sectorAngle;
-        
-        if (angle <= cumulativeAngle) {
-          clickedIndex = i;
-          break;
-        }
-      }
-      
-      if (clickedIndex !== -1) {
-        const clickedData = chartInstance.value.data[clickedIndex];
-        emit('click', {
-          name: clickedData.name,
-          value: clickedData.value,
-          dataIndex: clickedIndex,
-          data: clickedData,
-          event: e
-        });
-        
-        // 触发tooltip事件
-        if (props.option.tooltip && props.option.tooltip.trigger === 'item') {
-          emit('tooltipShow', {
-            name: clickedData.name,
-            value: clickedData.value,
-            dataIndex: clickedIndex,
-            data: clickedData
-          });
-        }
-      }
+const shouldShowTooltipContent = (option) => {
+  const tooltip = option?.tooltip || {};
+  return tooltip.show !== false && tooltip.showContent !== false;
+};
+
+const measureTextWidth = (ctx, text, fontSize = 12) => {
+  if (!ctx || typeof ctx.measureText !== 'function') {
+    return String(text).length * fontSize * 0.6;
+  }
+  ctx.setFontSize(fontSize);
+  return ctx.measureText(String(text)).width || (String(text).length * fontSize * 0.6);
+};
+
+const formatNumber = (value, digits = 2) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '--';
+  return n.toFixed(digits);
+};
+
+const formatPercent = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '--';
+  return `${n.toFixed(1)}%`;
+};
+
+const normalizePieAngle = (angle) => {
+  // Align with drawing start at top (-Math.PI / 2)
+  return (angle + Math.PI / 2 + 2 * Math.PI) % (2 * Math.PI);
+};
+
+const findPieSectorIndex = (x, y) => {
+  const chart = chartInstance.value;
+  if (!chart || chart.type !== 'native-pie' || !chart.data?.length) return -1;
+
+  const dx = x - chart.centerX;
+  const dy = y - chart.centerY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  const outerRadius = chart.radius || 0;
+  const innerRadius = chart.innerRadius || 0;
+
+  if (distance > outerRadius) return -1;
+  if (innerRadius > 0 && distance < innerRadius) return -1;
+
+  const angle = normalizePieAngle(Math.atan2(dy, dx));
+  let cumulativeAngle = 0;
+  for (let i = 0; i < chart.data.length; i++) {
+    const item = chart.data[i];
+    const sectorAngle = chart.total ? (item.value / chart.total) * 2 * Math.PI : 0;
+    cumulativeAngle += sectorAngle;
+    if (angle <= cumulativeAngle) {
+      return i;
     }
   }
+  return -1;
 };
 
-// 移动事件
-const move = (e) => {
-  // 可以添加触摸移动逻辑
+const buildPiePointerPayload = (x, y) => {
+  const chart = chartInstance.value;
+  if (!chart || chart.type !== 'native-pie') return null;
+  const dataIndex = findPieSectorIndex(x, y);
+  if (dataIndex < 0) return null;
+
+  const item = chart.data[dataIndex];
+  const sector = chart.sectorAngles?.[dataIndex];
+  const defaultColors = chart.defaultColors || [];
+  const color = item.color || item.itemStyle?.color || defaultColors[dataIndex % defaultColors.length] || '#5470c6';
+  const percent = chart.total ? (item.value / chart.total) * 100 : 0;
+  const middleAngle = sector?.middleAngle ?? (-Math.PI / 2);
+  const markerRadius = ((chart.radius || 0) + (chart.innerRadius || 0)) / 2 || (chart.radius || 0) * 0.65;
+  const markerX = chart.centerX + markerRadius * Math.cos(middleAngle);
+  const markerY = chart.centerY + markerRadius * Math.sin(middleAngle);
+
+  return {
+    componentType: 'series',
+    seriesType: 'pie',
+    seriesName: chart.seriesName,
+    name: item.name,
+    dataIndex,
+    value: item.value,
+    percent,
+    color,
+    data: item,
+    x: markerX,
+    y: markerY,
+    startAngle: sector?.startAngle,
+    endAngle: sector?.endAngle,
+    centerX: chart.centerX,
+    centerY: chart.centerY,
+    outerRadius: chart.radius,
+    innerRadius: chart.innerRadius || 0,
+    event: {
+      offsetX: x,
+      offsetY: y
+    }
+  };
 };
 
-// 触摸结束事件
-const touchEnd = (e) => {
-  // 可以添加触摸结束逻辑
+const getPieTooltipLines = (pointer) => {
+  return [
+    { text: String(pointer.name ?? ''), color: '#f8fafc', fontSize: 12 },
+    {
+      text: `${formatNumber(pointer.value)} (${formatPercent(pointer.percent)})`,
+      color: pointer.color || '#e2e8f0',
+      fontSize: 11
+    }
+  ];
+};
+
+const drawPieActiveSector = (ctx) => {
+  const pointer = activePointer.value;
+  const chart = chartInstance.value;
+  if (!pointer || !ctx || !chart) return;
+
+  const startAngle = pointer.startAngle;
+  const endAngle = pointer.endAngle;
+  if (startAngle == null || endAngle == null) return;
+
+  ctx.beginPath();
+  if ((pointer.innerRadius || 0) > 0) {
+    ctx.arc(pointer.centerX, pointer.centerY, pointer.outerRadius, startAngle, endAngle);
+    ctx.arc(pointer.centerX, pointer.centerY, pointer.innerRadius, endAngle, startAngle, true);
+  } else {
+    ctx.moveTo(pointer.centerX, pointer.centerY);
+    ctx.arc(pointer.centerX, pointer.centerY, pointer.outerRadius, startAngle, endAngle);
+    ctx.closePath();
+  }
+  ctx.setStrokeStyle(pointer.color || '#5470c6');
+  ctx.setLineWidth(3);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.setFillStyle('#ffffff');
+  ctx.arc(pointer.x, pointer.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.setFillStyle(pointer.color || '#5470c6');
+  ctx.arc(pointer.x, pointer.y, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+};
+
+const drawPieTooltipBox = (ctx) => {
+  const pointer = activePointer.value;
+  if (!pointer || !ctx) return;
+  if (!shouldShowTooltipContent(props.option)) return;
+
+  const lines = getPieTooltipLines(pointer);
+  const paddingX = 10;
+  const paddingY = 8;
+  const lineGap = 6;
+  let boxWidth = 0;
+  let boxHeight = paddingY * 2 - lineGap;
+  lines.forEach((line) => {
+    boxWidth = Math.max(boxWidth, measureTextWidth(ctx, line.text, line.fontSize || 11));
+    boxHeight += (line.fontSize || 11) + lineGap;
+  });
+  boxWidth += paddingX * 2;
+
+  const anchorX = pointer.event?.offsetX ?? pointer.x ?? 0;
+  const anchorY = pointer.event?.offsetY ?? pointer.y ?? 0;
+  let boxX = anchorX + 12;
+  if (boxX + boxWidth > canvasWidth.value - 8) {
+    boxX = anchorX - boxWidth - 12;
+  }
+  boxX = Math.max(8, boxX);
+  let boxY = Math.max(8, anchorY - boxHeight - 12);
+  if (boxY + boxHeight > canvasHeight.value - 8) {
+    boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
+  }
+
+  const tooltip = props.option?.tooltip || {};
+  ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
+  ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+  ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
+  ctx.setLineWidth(tooltip.borderWidth || 1);
+  ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+  let currentY = boxY + paddingY;
+  lines.forEach((line) => {
+    ctx.setFontSize(line.fontSize || 11);
+    ctx.setFillStyle(line.color || tooltip.textStyle?.color || '#e2e8f0');
+    ctx.setTextAlign('left');
+    ctx.setTextBaseline('top');
+    ctx.fillText(line.text, boxX + paddingX, currentY);
+    currentY += (line.fontSize || 11) + lineGap;
+  });
+};
+
+const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
+  const chart = chartInstance.value;
+  if (!chart || chart.type !== 'native-pie' || !chart.data?.length) {
+    activePointer.value = null;
+    return null;
+  }
+
+  const pointer = buildPiePointerPayload(touchX, touchY);
+  if (!pointer) {
+    // Keep previous sector when finger leaves pie area
+    return activePointer.value;
+  }
+
+  touchInfo.value.lastX = touchX;
+  touchInfo.value.lastY = touchY;
+  activePointer.value = pointer;
+  if (emitTooltip) {
+    emit('tooltipShow', pointer);
+  }
+  drawChart();
+  return pointer;
+};
+
+const handleTouchStart = (e) => {
+  const touch = e.touches && e.touches[0];
+  if (!touch) return;
+  touchInfo.value.startX = touch.x || 0;
+  touchInfo.value.startY = touch.y || 0;
+  touchInfo.value.lastX = touchInfo.value.startX;
+  touchInfo.value.lastY = touchInfo.value.startY;
+  updateActivePointer(touchInfo.value.startX, touchInfo.value.startY, true);
+};
+
+const handleTouchMove = (e) => {
+  e.preventDefault && e.preventDefault();
+  const touch = e.touches && e.touches[0];
+  if (!touch) return;
+  updateActivePointer(touch.x || 0, touch.y || 0, true);
+};
+
+const handleTouchEnd = (e) => {
+  const touch = e.changedTouches && e.changedTouches[0];
+  if (!touch) return;
+  const endX = touch.x || 0;
+  const endY = touch.y || 0;
+  const pointer = updateActivePointer(endX, endY, true) || activePointer.value;
+  const moved =
+    Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
+    Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
+  if (!moved && pointer) {
+    emit('click', pointer);
+  }
 };
 
 // 更新数据
