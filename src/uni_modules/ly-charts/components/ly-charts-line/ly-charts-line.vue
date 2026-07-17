@@ -16,6 +16,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { nextTick, getCurrentInstance } from 'vue';
 import chartHelper from '../../libs/util/chartHelper.js';
+import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
 const instance = getCurrentInstance()
 
 // 定义props
@@ -48,6 +49,10 @@ const seriesData = ref([]);
 const activePointer = ref(null);
 const plotGrid = ref(null);
 const categoryCenters = ref([]);
+const currentOption = ref({});
+const disposed = ref(false);
+const loading = ref(false);
+const eventRegistry = createEventRegistry();
 // 触摸相关信息
 const touchInfo = ref({
   startX: 0,
@@ -92,7 +97,11 @@ const initCanvas = () => {
 };
 
 const drawChart = (option) => {
+  if (disposed.value) return;
   if (!ctx.value || !option) return;
+  const normalizedOption = normalizeOption(option);
+  currentOption.value = normalizedOption;
+  option = normalizedOption;
   
   try {
     // 清空画布
@@ -591,9 +600,9 @@ const getLineTooltipLines = (pointer) => {
 
 const drawLineAxisPointer = () => {
   if (!activePointer.value || !ctx.value || !plotGrid.value) return;
-  if (!shouldShowAxisPointer(props.option)) return;
+  if (!shouldShowAxisPointer(currentOption.value)) return;
 
-  const axisPointer = props.option?.tooltip?.axisPointer || {};
+  const axisPointer = currentOption.value?.tooltip?.axisPointer || {};
   const lineColor = axisPointer.lineStyle?.color || 'rgba(71, 85, 105, 0.75)';
   const lineWidth = axisPointer.lineStyle?.width || 1;
   const g = plotGrid.value;
@@ -632,7 +641,7 @@ const drawLineAxisPointer = () => {
 
 const drawLineTooltipBox = () => {
   if (!activePointer.value || !ctx.value) return;
-  if (!shouldShowTooltipContent(props.option)) return;
+  if (!shouldShowTooltipContent(currentOption.value)) return;
 
   const pointer = activePointer.value;
   const lines = getLineTooltipLines(pointer);
@@ -657,7 +666,7 @@ const drawLineTooltipBox = () => {
     boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
   }
 
-  const tooltip = props.option?.tooltip || {};
+  const tooltip = currentOption.value?.tooltip || {};
   ctx.value.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
   ctx.value.fillRect(boxX, boxY, boxWidth, boxHeight);
   ctx.value.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
@@ -690,9 +699,9 @@ const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
   touchInfo.value.lastY = touchY;
   activePointer.value = pointer;
   if (emitTooltip) {
-    emit('tooltipShow', pointer);
+    emitChartEvent('tooltipShow', pointer);
   }
-  drawChart(props.option);
+  drawChart(currentOption.value || props.option);
   return pointer;
 };
 
@@ -724,38 +733,113 @@ const handleTouchEnd = (e) => {
     Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
     Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
   if (!moved && pointer) {
-    emit('click', pointer);
+    emitChartEvent('click', pointer);
   }
 };
 
 // 定义emit
 const emit = defineEmits(['click', 'tooltipShow']);
 
+const emitChartEvent = (eventName, payload) => {
+  emit(eventName, payload);
+  eventRegistry.emit(eventName, payload);
+};
+
 // 提供类似 ECharts 的 setOption 方法
 const setOption = (option, notMerge = false) => {
-  if (notMerge) {
-    drawChart(option);
-  } else {
-    // 简单合并配置
-    try {
-      const newOption = JSON.parse(JSON.stringify(props.option));
-      Object.assign(newOption, option);
-      drawChart(newOption);
-    } catch (error) {
-      console.error('合并配置失败:', error);
-      drawChart(option);
-    }
-  }
+  if (disposed.value) return false;
+  const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
+  drawChart(nextOption);
+  return true;
 };
 
 // 提供类似 ECharts 的 resize 方法
 const resize = () => {
+  if (disposed.value) return false;
   initCanvas();
+  return true;
+};
+
+const getOption = () => currentOption.value;
+const getWidth = () => canvasWidth.value || 0;
+const getHeight = () => canvasHeight.value || 0;
+
+const clear = () => {
+  activePointer.value = null;
+  seriesData.value = [];
+  categoryCenters.value = [];
+  if (ctx.value) {
+    ctx.value.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+    ctx.value.draw && ctx.value.draw();
+  }
+  return true;
+};
+
+const dispose = () => {
+  if (disposed.value) return true;
+  disposed.value = true;
+  eventRegistry.clear();
+  clear();
+  return true;
+};
+
+const showLoading = (textOrOptions = 'Loading...') => {
+  if (disposed.value || !ctx.value) return false;
+  loading.value = true;
+  const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
+  ctx.value.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+  ctx.value.setFillStyle('rgba(255,255,255,0.86)');
+  ctx.value.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
+  ctx.value.setFillStyle('#64748b');
+  ctx.value.setFontSize && ctx.value.setFontSize(14);
+  ctx.value.setTextAlign && ctx.value.setTextAlign('center');
+  ctx.value.setTextBaseline && ctx.value.setTextBaseline('middle');
+  ctx.value.fillText(text, canvasWidth.value / 2, canvasHeight.value / 2);
+  ctx.value.draw && ctx.value.draw();
+  return true;
+};
+
+const hideLoading = () => {
+  if (disposed.value) return false;
+  loading.value = false;
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
+const on = (eventName, handler) => eventRegistry.on(eventName, handler);
+const off = (eventName, handler) => eventRegistry.off(eventName, handler);
+
+const updateActivePointerByDataIndex = (dataIndex, seriesIndex = 0) => {
+  const index = Number(dataIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= categoryCenters.value.length) return false;
+  const series = seriesData.value[seriesIndex] || seriesData.value[0];
+  const point = series?.points?.[index];
+  const x = categoryCenters.value[index] || point?.x;
+  const y = point?.y || (plotGrid.value ? plotGrid.value.top + plotGrid.value.height / 2 : 0);
+  const pointer = buildLinePointerPayload(index, x, y);
+  if (!pointer) return false;
+  activePointer.value = pointer;
+  emitChartEvent('tooltipShow', pointer);
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
+const dispatchAction = (action = {}) => {
+  if (disposed.value || !action || !action.type) return false;
+  if (action.type === 'hideTip') {
+    activePointer.value = null;
+    drawChart(currentOption.value || props.option);
+    return true;
+  }
+  if (action.type === 'showTip') {
+    return updateActivePointerByDataIndex(action.dataIndex, action.seriesIndex || 0);
+  }
+  return false;
 };
 
 // 监听option变化
 watch(() => props.option, (newOption) => {
-  drawChart(newOption);
+  if (!disposed.value) drawChart(newOption);
 }, { deep: true });
 
 // 组件挂载后初始化
@@ -768,7 +852,17 @@ onMounted(() => {
 // 导出需要在模板中使用的变量和方法
 defineExpose({
   setOption,
-  resize
+  getOption,
+  resize,
+  clear,
+  dispose,
+  showLoading,
+  hideLoading,
+  getWidth,
+  getHeight,
+  on,
+  off,
+  dispatchAction
 });
 </script>
 

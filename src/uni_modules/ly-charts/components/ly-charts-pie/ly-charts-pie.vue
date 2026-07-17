@@ -32,6 +32,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick, getCurrentInstance } from 'vue';
+import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
 
 const instance = getCurrentInstance()!.proxy!;
 
@@ -93,6 +94,10 @@ const canvasHeight = ref(typeof props.height === 'string' ? parseUnit(props.heig
 const isMount = ref(false);
 const chartInstance = ref(null);
 const activePointer = ref(null);
+const currentOption = ref({});
+const disposed = ref(false);
+const loading = ref(false);
+const eventRegistry = createEventRegistry();
 const touchInfo = ref({
   startX: 0,
   startY: 0,
@@ -131,8 +136,10 @@ const getCanvasSize = () => {
 };
 
 // 绘制图表
-const drawChart = () => {
-  if (!props.option || !Object.keys(props.option).length) return;
+const drawChart = (option = props.option) => {
+  if (disposed.value) return;
+  currentOption.value = normalizeOption(option || {});
+  if (!currentOption.value || !Object.keys(currentOption.value).length) return;
   
   // 使用原生Canvas绘制饼图
   drawNativePie();
@@ -148,7 +155,8 @@ const drawNativePie = () => {
   ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
   
   // 获取数据
-  const series = props.option.series && props.option.series[0] || {};
+  const option = currentOption.value || normalizeOption(props.option || {});
+  const series = option.series && option.series[0] || {};
   const data = series.data || [];
   if (!data.length) return;
   
@@ -165,14 +173,14 @@ const drawNativePie = () => {
   let topLegendHeight = 0;
   let bottomLegendHeight = 0;
   
-  if (props.option.legend && props.option.legend.show !== false) {
+  if (option.legend && option.legend.show !== false) {
     // 简单估算图例尺寸
     const legendItemWidth = 80; // 假设每个图例项宽度为80px
     const legendItemHeight = 20; // 假设每个图例项高度为20px
     
     // 遵循ECharts规范，使用top、bottom、left、right控制图例位置
     // 支持数字（像素值）、百分比字符串或关键字
-    let legend = props.option.legend;
+    let legend = option.legend;
     const topValue = legend.top;
     const bottomValue = legend.bottom;
     const leftValue = legend.left;
@@ -186,7 +194,7 @@ const drawNativePie = () => {
     // 如果没有设置top或bottom，则默认放在底部
     const isBottomDefault = !hasTop && !hasBottom;
     
-    if (props.option.legend.orient === 'vertical') {
+    if (option.legend.orient === 'vertical') {
       const legendHeight = data.length * legendItemHeight;
       if (hasLeft) {
         leftLegendWidth = legendItemWidth;
@@ -322,7 +330,7 @@ const drawNativePie = () => {
   drawLabelsWithLines(ctx, sectorAngles, centerX, centerY, outerRadiusPx, defaultColors, data);
   
   // 绘制legend
-  if (props.option.legend && props.option.legend.show !== false) {
+  if (option.legend && option.legend.show !== false) {
     drawLegend(ctx, data, defaultColors);
   }
 
@@ -427,7 +435,7 @@ const drawLabelsWithLines = (ctx, sectorAngles, centerX, centerY, radius, defaul
 
 // 绘制legend
 const drawLegend = (ctx, data, defaultColors) => {
-  const legend = props.option.legend;
+  const legend = currentOption.value?.legend;
   if (!legend || legend.show === false) return;
   
   const itemHeight = 14;
@@ -720,7 +728,7 @@ const drawPieActiveSector = (ctx) => {
 const drawPieTooltipBox = (ctx) => {
   const pointer = activePointer.value;
   if (!pointer || !ctx) return;
-  if (!shouldShowTooltipContent(props.option)) return;
+  if (!shouldShowTooltipContent(currentOption.value)) return;
 
   const lines = getPieTooltipLines(pointer);
   const paddingX = 10;
@@ -746,7 +754,7 @@ const drawPieTooltipBox = (ctx) => {
     boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
   }
 
-  const tooltip = props.option?.tooltip || {};
+  const tooltip = currentOption.value?.tooltip || {};
   ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
   ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
   ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
@@ -781,9 +789,9 @@ const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
   touchInfo.value.lastY = touchY;
   activePointer.value = pointer;
   if (emitTooltip) {
-    emit('tooltipShow', pointer);
+    emitChartEvent('tooltipShow', pointer);
   }
-  drawChart();
+  drawChart(currentOption.value || props.option);
   return pointer;
 };
 
@@ -814,17 +822,23 @@ const handleTouchEnd = (e) => {
     Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
     Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
   if (!moved && pointer) {
-    emit('click', pointer);
+    emitChartEvent('click', pointer);
   }
+};
+
+const emitChartEvent = (eventName, payload) => {
+  emit(eventName, payload);
+  eventRegistry.emit(eventName, payload);
 };
 
 // 更新数据
 const updateData = (data) => {
   if (chartInstance.value) {
     if (chartInstance.value.type === 'native-pie') {
-      // 原生饼图更新数据
-      props.option.series[0].data = data;
-      drawNativePie();
+      const nextOption = mergeOptions(currentOption.value || props.option, {
+        series: [{ ...((currentOption.value.series && currentOption.value.series[0]) || {}), data }]
+      });
+      drawChart(nextOption);
     }
   }
 };
@@ -834,12 +848,104 @@ const getChartInstance = () => {
   return chartInstance.value;
 };
 
+const setOption = (option, notMerge = false) => {
+  if (disposed.value) return false;
+  const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
+  drawChart(nextOption);
+  return true;
+};
+
+const getOption = () => currentOption.value;
+const getWidth = () => canvasWidth.value || 0;
+const getHeight = () => canvasHeight.value || 0;
+
+const clear = () => {
+  activePointer.value = null;
+  chartInstance.value = null;
+  const ctx = uni.createCanvasContext(cid, instance);
+  if (ctx) {
+    ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+    ctx.draw && ctx.draw();
+  }
+  return true;
+};
+
+const dispose = () => {
+  if (disposed.value) return true;
+  disposed.value = true;
+  eventRegistry.clear();
+  clear();
+  return true;
+};
+
+const resize = () => {
+  if (disposed.value) return false;
+  return init();
+};
+
+const showLoading = (textOrOptions = 'Loading...') => {
+  if (disposed.value) return false;
+  loading.value = true;
+  const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
+  const ctx = uni.createCanvasContext(cid, instance);
+  ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+  ctx.setFillStyle('rgba(255,255,255,0.86)');
+  ctx.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
+  ctx.setFillStyle('#64748b');
+  ctx.setFontSize && ctx.setFontSize(14);
+  ctx.setTextAlign && ctx.setTextAlign('center');
+  ctx.setTextBaseline && ctx.setTextBaseline('middle');
+  ctx.fillText(text, canvasWidth.value / 2, canvasHeight.value / 2);
+  ctx.draw && ctx.draw();
+  return true;
+};
+
+const hideLoading = () => {
+  if (disposed.value) return false;
+  loading.value = false;
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
+const on = (eventName, handler) => eventRegistry.on(eventName, handler);
+const off = (eventName, handler) => eventRegistry.off(eventName, handler);
+
+const updateActivePointerByDataIndex = (dataIndex) => {
+  const index = Number(dataIndex);
+  const chart = chartInstance.value;
+  if (!Number.isInteger(index) || !chart || !chart.sectorAngles || index < 0 || index >= chart.sectorAngles.length) return false;
+  const sector = chart.sectorAngles[index];
+  const middleAngle = sector.middleAngle;
+  const radius = chart.innerRadius ? (chart.innerRadius + chart.radius) / 2 : chart.radius * 0.6;
+  const x = chart.centerX + Math.cos(middleAngle) * radius;
+  const y = chart.centerY + Math.sin(middleAngle) * radius;
+  const pointer = buildPiePointerPayload(x, y);
+  if (!pointer) return false;
+  activePointer.value = pointer;
+  emitChartEvent('tooltipShow', pointer);
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
+const dispatchAction = (action = {}) => {
+  if (disposed.value || !action || !action.type) return false;
+  if (action.type === 'hideTip') {
+    activePointer.value = null;
+    drawChart(currentOption.value || props.option);
+    return true;
+  }
+  if (action.type === 'showTip') {
+    return updateActivePointerByDataIndex(action.dataIndex);
+  }
+  return false;
+};
+
 // 监听option变化
 watch(
   () => props.option,
   (newVal) => {
-    if (isMount.value) {
-      drawChart();
+    if (isMount.value && !disposed.value) {
+      drawChart(newVal);
     }
   },
   { deep: true }
@@ -886,6 +992,18 @@ onUnmounted(() => {
 
 // 暴露方法给父组件
 defineExpose({
+  setOption,
+  getOption,
+  resize,
+  clear,
+  dispose,
+  showLoading,
+  hideLoading,
+  getWidth,
+  getHeight,
+  on,
+  off,
+  dispatchAction,
   updateData,
   getChartInstance
 });

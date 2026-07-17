@@ -17,6 +17,7 @@
 
 <script>
 import chartHelper from '../../libs/util/chartHelper.js';
+import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
 
 export default {
   name: 'ly-charts-candlestick',
@@ -52,6 +53,10 @@ export default {
       zoomEnd: 100,
       renderState: null,
       activePointer: null,
+      currentOption: {},
+      disposed: false,
+      loading: false,
+      eventRegistry: createEventRegistry(),
       touchInfo: {
         startX: 0,
         startY: 0,
@@ -75,6 +80,7 @@ export default {
   watch: {
     option: {
       handler() {
+        this.currentOption = normalizeOption(this.option || {});
         this.syncZoomFromOption();
         this.drawChart();
       },
@@ -93,12 +99,14 @@ export default {
       this.ctx = canvasRef;
       this.canvasWidth = event.width || canvasRef.getWidth();
       this.canvasHeight = event.height || canvasRef.getHeight();
+      this.currentOption = normalizeOption(this.option || {});
       this.syncZoomFromOption();
       this.drawChart();
     },
     syncZoomFromOption() {
-      const zoom = Array.isArray(this.option?.dataZoom) && this.option.dataZoom.length > 0
-        ? this.option.dataZoom[0]
+      const option = this.currentOption || this.option || {};
+      const zoom = Array.isArray(option?.dataZoom) && option.dataZoom.length > 0
+        ? option.dataZoom[0]
         : {};
       const start = zoom.start !== undefined ? Number(zoom.start) : 0;
       const end = zoom.end !== undefined ? Number(zoom.end) : 100;
@@ -221,7 +229,7 @@ export default {
       return source || {};
     },
     getSeriesCollection() {
-      const series = Array.isArray(this.option?.series) ? this.option.series : [];
+      const series = Array.isArray(this.currentOption?.series) ? this.currentOption.series : [];
       let candlestickSeries = null;
       const lineSeries = [];
       const barSeries = [];
@@ -246,7 +254,7 @@ export default {
       });
     },
     drawTitle() {
-      const title = this.option?.title;
+      const title = this.currentOption?.title;
       if (!title || !title.text) {
         return 0;
       }
@@ -285,9 +293,9 @@ export default {
       return height;
     },
     createBaseGrid(titleHeight, showSlider) {
-      const gridOptions = Array.isArray(this.option?.grid)
-        ? this.option.grid
-        : [this.option?.grid || {}];
+      const gridOptions = Array.isArray(this.currentOption?.grid)
+        ? this.currentOption.grid
+        : [this.currentOption?.grid || {}];
       const firstGrid = gridOptions[0] || {};
       const grid = {
         left: this.parseLayoutValue(firstGrid.left, this.canvasWidth, 56),
@@ -325,9 +333,9 @@ export default {
       };
     },
     createPanelLayout(baseGrid, hasVolume) {
-      const gridOptions = Array.isArray(this.option?.grid)
-        ? this.option.grid
-        : [this.option?.grid || {}];
+      const gridOptions = Array.isArray(this.currentOption?.grid)
+        ? this.currentOption.grid
+        : [this.currentOption?.grid || {}];
 
       if (gridOptions.length > 1) {
         const priceGrid = this.normalizeGridOption(gridOptions[0], baseGrid);
@@ -352,14 +360,14 @@ export default {
         };
       }
 
-      const panelGap = this.parseLayoutValue(this.option?.panelGap, this.canvasHeight, 12);
+      const panelGap = this.parseLayoutValue(this.currentOption?.panelGap, this.canvasHeight, 12);
       const maxVolumeHeight = Math.max(56, Math.min(120, baseGrid.height * 0.34));
       const defaultVolumeHeight = Math.max(56, Math.min(maxVolumeHeight, baseGrid.height * 0.24));
       const volumeHeight = Math.max(
         56,
         Math.min(
           maxVolumeHeight,
-          this.parseLayoutValue(this.option?.volumeHeight, baseGrid.height, defaultVolumeHeight)
+          this.parseLayoutValue(this.currentOption?.volumeHeight, baseGrid.height, defaultVolumeHeight)
         )
       );
       const priceHeight = Math.max(80, baseGrid.height - volumeHeight - panelGap);
@@ -1143,7 +1151,7 @@ export default {
       this.touchInfo.lastY = touchY;
       this.activePointer = this.buildPointerPayload(item, touchX, touchY, chartState);
       if (emitTooltip) {
-        this.$emit('tooltipShow', this.activePointer);
+        this.emitChartEvent('tooltipShow', this.activePointer);
       }
       this.drawChart();
       return this.activePointer;
@@ -1152,7 +1160,7 @@ export default {
       if (!this.activePointer || !chartState) {
         return;
       }
-      const tooltipOption = this.option?.tooltip || {};
+      const tooltipOption = this.currentOption?.tooltip || {};
       const axisPointer = tooltipOption.axisPointer || {};
       if (axisPointer.show === false) {
         return;
@@ -1214,7 +1222,7 @@ export default {
       if (!this.activePointer || !chartState) {
         return;
       }
-      const tooltipOption = this.option?.tooltip || {};
+      const tooltipOption = this.currentOption?.tooltip || {};
       if (tooltipOption.show === false || tooltipOption.showContent === false) {
         return;
       }
@@ -1258,8 +1266,11 @@ export default {
       });
     },
     drawChart() {
-      if (!this.ctx || !this.option) {
+      if (this.disposed || !this.ctx) {
         return;
+      }
+      if (!this.currentOption || Object.keys(this.currentOption).length === 0) {
+        this.currentOption = normalizeOption(this.option || {});
       }
 
       const { candlestickSeries, lineSeries, barSeries, allSeries } = this.getSeriesCollection();
@@ -1269,25 +1280,25 @@ export default {
         return;
       }
 
-      const xAxisSource = this.option?.xAxis || {};
-      const yAxisSource = this.option?.yAxis || {};
+      const xAxisSource = this.currentOption?.xAxis || {};
+      const yAxisSource = this.currentOption?.yAxis || {};
       const categories = Array.isArray(this.getAxisOption(xAxisSource, 0).data)
         ? this.getAxisOption(xAxisSource, 0).data
         : (Array.isArray(candlestickSeries.data) ? candlestickSeries.data.map((_, index) => `${index}`) : []);
-      const showSlider = Array.isArray(this.option?.dataZoom)
-        ? this.option.dataZoom.some((item) => item.type === 'slider' && item.show !== false)
+      const showSlider = Array.isArray(this.currentOption?.dataZoom)
+        ? this.currentOption.dataZoom.some((item) => item.type === 'slider' && item.show !== false)
         : false;
 
       this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-      if (this.option.backgroundColor) {
-        this.ctx.setFillStyle(this.option.backgroundColor);
+      if (this.currentOption.backgroundColor) {
+        this.ctx.setFillStyle(this.currentOption.backgroundColor);
         this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
       }
 
       const titleHeight = this.drawTitle();
       const baseGrid = this.createBaseGrid(titleHeight, showSlider);
 
-      const legend = this.option?.legend;
+      const legend = this.currentOption?.legend;
       const legendData = Array.isArray(legend?.data) && legend.data.length > 0
         ? legend.data
         : allSeries.map((serie) => serie.name).filter(Boolean);
@@ -1387,26 +1398,113 @@ export default {
       const safeEnd = Math.max(safeStart + 1, Math.min(100, Number(end)));
       this.zoomStart = safeStart;
       this.zoomEnd = safeEnd;
-      this.$emit('zoom', { start: this.zoomStart, end: this.zoomEnd });
+      this.emitChartEvent('zoom', { start: this.zoomStart, end: this.zoomEnd });
       this.drawChart();
     },
     setOption(option, notMerge = false) {
-      if (notMerge) {
-        this.$emit('update:option', option);
-        this.drawChart();
-        return;
-      }
-      try {
-        const newOption = JSON.parse(JSON.stringify(this.option || {}));
-        Object.assign(newOption, option);
-        this.$emit('update:option', newOption);
-      } catch (error) {
-        console.error('合并 K 线配置失败:', error);
-      }
+      if (this.disposed) return false;
+      const nextOption = mergeOptions(this.currentOption || this.option, option, notMerge);
+      this.currentOption = nextOption;
+      this.$emit('update:option', nextOption);
+      this.syncZoomFromOption();
       this.drawChart();
+      return true;
     },
     resize() {
+      if (this.disposed) return false;
       this.initCanvas();
+      return true;
+    },
+    getOption() {
+      return this.currentOption;
+    },
+    getWidth() {
+      return this.canvasWidth || 0;
+    },
+    getHeight() {
+      return this.canvasHeight || 0;
+    },
+    clear() {
+      this.activePointer = null;
+      this.renderState = null;
+      this.candleRegions = [];
+      this.volumeRegions = [];
+      this.markPointRegions = [];
+      if (this.ctx) {
+        this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+        this.ctx.draw();
+      }
+      return true;
+    },
+    dispose() {
+      if (this.disposed) return true;
+      this.disposed = true;
+      this.eventRegistry.clear();
+      this.clear();
+      return true;
+    },
+    showLoading(textOrOptions = 'Loading...') {
+      if (this.disposed || !this.ctx) return false;
+      this.loading = true;
+      const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
+      this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.ctx.setFillStyle('rgba(255,255,255,0.86)');
+      this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.ctx.setFillStyle('#64748b');
+      this.ctx.setFontSize(14);
+      this.ctx.setTextAlign('center');
+      this.ctx.setTextBaseline('middle');
+      this.ctx.fillText(text, this.canvasWidth / 2, this.canvasHeight / 2);
+      this.ctx.draw();
+      return true;
+    },
+    hideLoading() {
+      if (this.disposed) return false;
+      this.loading = false;
+      this.drawChart();
+      return true;
+    },
+    on(eventName, handler) {
+      return this.eventRegistry.on(eventName, handler);
+    },
+    off(eventName, handler) {
+      return this.eventRegistry.off(eventName, handler);
+    },
+    emitChartEvent(eventName, payload) {
+      this.$emit(eventName, payload);
+      this.eventRegistry.emit(eventName, payload);
+    },
+    updateActivePointerByDataIndex(dataIndex) {
+      const index = Number(dataIndex);
+      const chartState = this.renderState;
+      if (!Number.isInteger(index) || !chartState || !chartState.visibleCandles?.items?.length) return false;
+      const item = chartState.visibleCandles.items.find((entry) => entry.index === index)
+        || chartState.visibleCandles.items[index];
+      if (!item) return false;
+      const touchX = chartState.priceGrid.left + chartState.priceGrid.width / Math.max(chartState.visibleCandles.items.length, 1) * (chartState.visibleCandles.items.indexOf(item) + 0.5);
+      const touchY = this.valueToY(item.close, chartState.priceRange.min, chartState.priceRange.max, chartState.priceGrid);
+      this.activePointer = this.buildPointerPayload(item, touchX, touchY, chartState);
+      this.emitChartEvent('tooltipShow', this.activePointer);
+      this.drawChart();
+      return true;
+    },
+    dispatchAction(action = {}) {
+      if (this.disposed || !action || !action.type) return false;
+      if (action.type === 'hideTip') {
+        this.activePointer = null;
+        this.drawChart();
+        return true;
+      }
+      if (action.type === 'showTip') {
+        return this.updateActivePointerByDataIndex(action.dataIndex);
+      }
+      if (action.type === 'dataZoom') {
+        const start = action.start != null ? action.start : this.zoomStart;
+        const end = action.end != null ? action.end : this.zoomEnd;
+        this.setZoom(start, end);
+        return true;
+      }
+      return false;
     },
     resolveSliderDragMode(x) {
       const selection = this.getSliderSelection();
@@ -1431,7 +1529,7 @@ export default {
       }
       const mode = this.touchInfo.sliderDragMode || 'move';
       const deltaPercent = ((x || 0) - this.touchInfo.startX) / Math.max(this.sliderRect.width, 1) * 100;
-      const minSpan = Math.max(1, Number(this.option?.dataZoom?.[0]?.minSpan || 5));
+      const minSpan = Math.max(1, Number(this.currentOption?.dataZoom?.[0]?.minSpan || 5));
       const zoomSpan = this.touchInfo.originZoomEnd - this.touchInfo.originZoomStart;
 
       let nextStart = this.zoomStart;
@@ -1528,7 +1626,7 @@ export default {
       if (this.touchInfo.draggingSlider) {
         this.touchInfo.draggingSlider = false;
         this.touchInfo.sliderDragMode = '';
-        this.$emit('zoom', { start: this.zoomStart, end: this.zoomEnd });
+        this.emitChartEvent('zoom', { start: this.zoomStart, end: this.zoomEnd });
         return;
       }
 
@@ -1541,8 +1639,8 @@ export default {
           category: markPoint.category,
           event: { offsetX: markPoint.centerX, offsetY: markPoint.centerY }
         };
-        this.$emit('click', payload);
-        this.$emit('tooltipShow', payload);
+        this.emitChartEvent('click', payload);
+        this.emitChartEvent('tooltipShow', payload);
         return;
       }
 
@@ -1553,8 +1651,8 @@ export default {
 
       const payload = this.buildClickPayload(pointer, endX, endY);
       if (payload) {
-        this.$emit('click', payload);
-        this.$emit('tooltipShow', payload);
+        this.emitChartEvent('click', payload);
+        this.emitChartEvent('tooltipShow', payload);
       }
     }
   },

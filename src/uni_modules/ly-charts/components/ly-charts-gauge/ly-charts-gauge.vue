@@ -14,6 +14,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted, getCurrentInstance } from 'vue';
 import chartHelper from '../../libs/util/chartHelper.js';
+import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
 const instance = getCurrentInstance()
 
 // 定义props
@@ -51,6 +52,10 @@ const targetValue = ref(0);
 const isInited = ref(false);
 const activePointer = ref(null);
 const gaugeMeta = ref(null);
+const currentOption = ref({});
+const disposed = ref(false);
+const loading = ref(false);
+const eventRegistry = createEventRegistry();
 const touchInfo = ref({
 	startX: 0,
 	startY: 0,
@@ -61,9 +66,8 @@ const TAP_SLOP = 8;
 
 // 监听option变化
 watch(() => props.option, (newVal) => {
-	console.log(newVal)
 	// 使用uview-plus自己的实现方式更新图表
-	updateChart(newVal);
+	if (!disposed.value) updateChart(newVal);
 }, { deep: true });
 
 /**
@@ -88,6 +92,7 @@ const init = () => {
  * @created 2025-08-05
  */
 const drawChart = () => {
+	if (disposed.value) return;
 	const ctx = uni.createCanvasContext(canvasId.value);
 	// 使用uview-plus自己的实现方式绘制仪表盘
 	drawGauge(ctx);
@@ -120,7 +125,8 @@ const drawGauge = (ctx) => {
 	const { width, height } = props;
 	const centerX = width / 2;
 	const centerY = height / 2;
-	const series = props.option.series && props.option.series.length > 0 ? props.option.series[0] : {};
+	const option = currentOption.value || normalizeOption(props.option || {});
+	const series = option.series && option.series.length > 0 ? option.series[0] : {};
 	const data = series.data && series.data.length > 0 ? series.data : [{ value: 0 }];
 	// 支持多个data
 	const values = data.map((item, index) => {
@@ -548,6 +554,8 @@ const startAnimation = (targetValue, duration = 1000) => {
  * @created 2025-08-05
  */
 const updateChart = (option) => {
+	currentOption.value = normalizeOption(option || {});
+	option = currentOption.value;
 	const series = option.series && option.series.length > 0 ? option.series[0] : {};
 	const data = series.data && series.data.length > 0 ? series.data : [{ value: 0 }];
 	// 修改: 支持多个数据项的动画
@@ -678,7 +686,7 @@ const getGaugeTooltipLines = (pointer) => {
 const drawGaugeTooltipBox = (ctx) => {
 	const pointer = activePointer.value;
 	if (!pointer || !ctx) return;
-	if (!shouldShowTooltipContent(props.option)) return;
+	if (!shouldShowTooltipContent(currentOption.value)) return;
 
 	const lines = getGaugeTooltipLines(pointer);
 	if (!lines.length) return;
@@ -706,7 +714,7 @@ const drawGaugeTooltipBox = (ctx) => {
 		boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
 	}
 
-	const tooltip = (props.option && props.option.tooltip) || {};
+	const tooltip = (currentOption.value && currentOption.value.tooltip) || {};
 	ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
 	ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
 	ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
@@ -741,7 +749,7 @@ const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
 	touchInfo.value.lastY = touchY;
 	activePointer.value = pointer;
 	if (emitTooltip) {
-		emit('tooltipShow', pointer);
+		emitChartEvent('tooltipShow', pointer);
 	}
 	drawChart();
 	return pointer;
@@ -774,8 +782,13 @@ const handleTouchEnd = (e) => {
 		Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
 		Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
 	if (!moved && pointer) {
-		emit('click', pointer);
+		emitChartEvent('click', pointer);
 	}
+};
+
+const emitChartEvent = (eventName, payload) => {
+	emit(eventName, payload);
+	eventRegistry.emit(eventName, payload);
 };
 
 /**
@@ -785,7 +798,7 @@ const handleTouchEnd = (e) => {
  * @created 2025-08-05
  */
 const getChartInstance = () => {
-	return null;
+	return gaugeMeta.value;
 };
 
 /**
@@ -795,6 +808,91 @@ const getChartInstance = () => {
  */
 const refresh = () => {
 	drawChart();
+};
+
+const setOption = (option, notMerge = false) => {
+	if (disposed.value) return false;
+	const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
+	updateChart(nextOption);
+	return true;
+};
+
+const getOption = () => currentOption.value;
+const getWidth = () => canvasWidth.value || 0;
+const getHeight = () => canvasHeight.value || 0;
+
+const clear = () => {
+	activePointer.value = null;
+	gaugeMeta.value = null;
+	const ctx = uni.createCanvasContext(canvasId.value);
+	ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+	ctx.draw && ctx.draw();
+	return true;
+};
+
+const dispose = () => {
+	if (disposed.value) return true;
+	disposed.value = true;
+	eventRegistry.clear();
+	clear();
+	return true;
+};
+
+const resize = () => {
+	if (disposed.value) return false;
+	init();
+	return true;
+};
+
+const showLoading = (textOrOptions = 'Loading...') => {
+	if (disposed.value) return false;
+	loading.value = true;
+	const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
+	const ctx = uni.createCanvasContext(canvasId.value);
+	ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+	ctx.setFillStyle('rgba(255,255,255,0.86)');
+	ctx.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
+	ctx.setFillStyle('#64748b');
+	ctx.setFontSize && ctx.setFontSize(14);
+	ctx.setTextAlign && ctx.setTextAlign('center');
+	ctx.setTextBaseline && ctx.setTextBaseline('middle');
+	ctx.fillText(text, canvasWidth.value / 2, canvasHeight.value / 2);
+	ctx.draw && ctx.draw();
+	return true;
+};
+
+const hideLoading = () => {
+	if (disposed.value) return false;
+	loading.value = false;
+	drawChart();
+	return true;
+};
+
+const on = (eventName, handler) => eventRegistry.on(eventName, handler);
+const off = (eventName, handler) => eventRegistry.off(eventName, handler);
+
+const showCurrentTip = () => {
+	const meta = gaugeMeta.value;
+	if (!meta) return false;
+	const pointer = buildGaugePointer(meta.centerX, meta.centerY);
+	if (!pointer) return false;
+	activePointer.value = pointer;
+	emitChartEvent('tooltipShow', pointer);
+	drawChart();
+	return true;
+};
+
+const dispatchAction = (action = {}) => {
+	if (disposed.value || !action || !action.type) return false;
+	if (action.type === 'hideTip') {
+		activePointer.value = null;
+		drawChart();
+		return true;
+	}
+	if (action.type === 'showTip') {
+		return showCurrentTip();
+	}
+	return false;
 };
 
 // 组件挂载后初始化
@@ -808,6 +906,23 @@ onUnmounted(() => {
 	if (animationTimer.value) {
 		clearInterval(animationTimer.value);
 	}
+});
+
+defineExpose({
+	setOption,
+	getOption,
+	resize,
+	clear,
+	dispose,
+	showLoading,
+	hideLoading,
+	getWidth,
+	getHeight,
+	on,
+	off,
+	dispatchAction,
+	refresh,
+	getChartInstance
 });
 </script>
 

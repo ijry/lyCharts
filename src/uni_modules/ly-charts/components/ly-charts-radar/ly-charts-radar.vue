@@ -13,6 +13,7 @@
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted, nextTick, getCurrentInstance } from 'vue';
+import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
 
 const instance = getCurrentInstance();
 
@@ -67,6 +68,10 @@ const canvasHeight = ref(typeof props.height === 'string' ? parseUnit(props.heig
 const isMount = ref(false);
 const chartInstance = ref(null);
 const activePointer = ref(null);
+const currentOption = ref({});
+const disposed = ref(false);
+const loading = ref(false);
+const eventRegistry = createEventRegistry();
 const touchInfo = ref({
   startX: 0,
   startY: 0,
@@ -126,8 +131,10 @@ const getCanvasSize = () => {
 };
 
 // 绘制图表
-const drawChart = () => {
-  if (!props.option || !Object.keys(props.option).length) return;
+const drawChart = (option = props.option) => {
+  if (disposed.value) return;
+  currentOption.value = normalizeOption(option || {});
+  if (!currentOption.value || !Object.keys(currentOption.value).length) return;
   
   // 使用原生Canvas绘制雷达图
   drawNativeRadar();
@@ -143,8 +150,8 @@ const drawNativeRadar = () => {
   ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
   
   // 获取雷达图配置
-  const radar = props.option.radar || {};
-  const series = props.option.series || []; // 支持多个系列
+  const radar = currentOption.value.radar || {};
+  const series = currentOption.value.series || []; // 支持多个系列
   // 兼容只传一个系列的情况
   const processedSeries = series.map(s => {
     if (Array.isArray(s)) {
@@ -158,7 +165,7 @@ const drawNativeRadar = () => {
   // 绘制标题
   let chartTop = 0;
   let titleHeight = 0;
-  if (props.option.title && props.option.title.show !== false) {
+  if (currentOption.value.title && currentOption.value.title.show !== false) {
     titleHeight = drawChartTitle(ctx);
     chartTop += titleHeight;
   }
@@ -169,7 +176,7 @@ const drawNativeRadar = () => {
   let chartLeft = 0;
   let chartRight = 0;
   let bottomHeight = 0;
-  if (props.option.legend && props.option.legend.show !== false) {
+  if (currentOption.value.legend && currentOption.value.legend.show !== false) {
     const legendInfo = drawChartLegend(ctx, chartTop, titleHeight);
     legendHeight = legendInfo.height;
     legendWidth = legendInfo.width;
@@ -177,7 +184,7 @@ const drawNativeRadar = () => {
     chartRight = legendInfo.right;
     
     // 如果图例在顶部或底部，需要调整图表顶部位置
-    if (props.option.legend.top != undefined) {
+    if (currentOption.value.legend.top != undefined) {
        chartTop += legendHeight;
     } else {
         // 如果图表在底部
@@ -225,7 +232,7 @@ const drawNativeRadar = () => {
 
 // 绘制图表标题
 const drawChartTitle = (ctx) => {
-  const title = props.option.title;
+  const title = currentOption.value.title;
   if (!title || title.show === false) return 0;
   
   let titleHeight = 0;
@@ -266,13 +273,13 @@ const drawChartTitle = (ctx) => {
 
 // 绘制图例
 const drawChartLegend = (ctx, top, titleHeight = 0) => {
-  const legend = props.option.legend || {};
+  const legend = currentOption.value.legend || {};
   if (legend.show === false) return { height: 0, width: 0, left: 0, right: 0 };
 
   // 优先使用chartHelper中的drawLegend方法
   try {
     // 准备legend数据
-    const series = props.option.series || [];
+    const series = currentOption.value.series || [];
     const processedSeries = series.map(s => {
       if (Array.isArray(s)) {
         return { data: s };
@@ -342,7 +349,7 @@ const drawChartLegend = (ctx, top, titleHeight = 0) => {
 const drawRadarGrid = (ctx, centerX, centerY, maxRadius, indicators) => {
   const numIndicators = indicators.length;
   // 修改: 支持splitNumber配置项，默认为5
-  const radar = props.option.radar || {};
+  const radar = currentOption.value.radar || {};
   const levels = radar.splitNumber || 5;
   // 修改: 支持shape配置项，默认为polygon(多边形)
   const shape = radar.shape || 'polygon';
@@ -491,13 +498,13 @@ const drawRadarData = (ctx, centerX, centerY, maxRadius, indicators, data) => {
   const seriesPoints = [];
   
   // 默认颜色列表
-  const defaultColors = props.option.color || [
+  const defaultColors = currentOption.value.color || [
     '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de',
     '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc'
   ];
   
   // 获取雷达图配置中的 radius 设置
-  const radar = props.option.radar || {};
+  const radar = currentOption.value.radar || {};
   let innerRadius = 0;
   let outerRadius = maxRadius;
   
@@ -724,7 +731,7 @@ const drawRadarLabels = (ctx, centerX, centerY, maxRadius, indicators) => {
   const numIndicators = indicators.length;
   
   // 获取雷达图配置中的 radius 设置
-  const radar = props.option.radar || {};
+  const radar = currentOption.value.radar || {};
   let outerRadius = maxRadius;
   
   // 支持 ECharts 的 radius 配置
@@ -934,9 +941,9 @@ const drawRadarAxisPointer = (ctx) => {
   const pointer = activePointer.value;
   const chart = chartInstance.value;
   if (!pointer || !ctx || !chart) return;
-  if (!shouldShowAxisPointer(props.option)) return;
+  if (!shouldShowAxisPointer(currentOption.value)) return;
 
-  const axisPointer = props.option?.tooltip?.axisPointer || {};
+  const axisPointer = currentOption.value?.tooltip?.axisPointer || {};
   const lineColor = axisPointer.lineStyle?.color || 'rgba(71, 85, 105, 0.75)';
   const lineWidth = axisPointer.lineStyle?.width || 1;
 
@@ -972,7 +979,7 @@ const drawRadarAxisPointer = (ctx) => {
 const drawRadarTooltipBox = (ctx) => {
   const pointer = activePointer.value;
   if (!pointer || !ctx) return;
-  if (!shouldShowTooltipContent(props.option)) return;
+  if (!shouldShowTooltipContent(currentOption.value)) return;
 
   const lines = getRadarTooltipLines(pointer);
   const paddingX = 10;
@@ -998,7 +1005,7 @@ const drawRadarTooltipBox = (ctx) => {
     boxY = Math.max(8, canvasHeight.value - boxHeight - 8);
   }
 
-  const tooltip = props.option?.tooltip || {};
+  const tooltip = currentOption.value?.tooltip || {};
   ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
   ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
   ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
@@ -1030,9 +1037,9 @@ const updateActivePointer = (touchX, touchY, emitTooltip = true) => {
   touchInfo.value.lastY = touchY;
   activePointer.value = pointer;
   if (emitTooltip) {
-    emit('tooltipShow', pointer);
+    emitChartEvent('tooltipShow', pointer);
   }
-  drawChart();
+  drawChart(currentOption.value || props.option);
   return pointer;
 };
 
@@ -1063,26 +1070,22 @@ const handleTouchEnd = (e) => {
     Math.abs(endX - touchInfo.value.startX) > TAP_SLOP ||
     Math.abs(endY - touchInfo.value.startY) > TAP_SLOP;
   if (!moved && pointer) {
-    emit('click', pointer);
+    emitChartEvent('click', pointer);
   }
+};
+
+const emitChartEvent = (eventName, payload) => {
+  emit(eventName, payload);
+  eventRegistry.emit(eventName, payload);
 };
 
 // 更新数据
 const updateData = (data) => {
   if (chartInstance.value) {
     if (chartInstance.value.type === 'native-radar') {
-      // 原生雷达图更新数据
-      // 支持更新整个series或只更新第一个系列的数据
-      if (Array.isArray(data)) {
-        if (Array.isArray(props.option.series[0])) {
-          props.option.series[0] = data;
-        } else {
-          props.option.series[0].data = data;
-        }
-      } else {
-        props.option.series = data;
-      }
-      drawNativeRadar();
+      const series = currentOption.value.series || [];
+      const nextSeries = Array.isArray(data) ? [{ ...(series[0] || { type: 'radar' }), data }] : data;
+      setOption({ series: nextSeries });
     }
   }
 };
@@ -1092,12 +1095,102 @@ const getChartInstance = () => {
   return chartInstance.value;
 };
 
+const setOption = (option, notMerge = false) => {
+  if (disposed.value) return false;
+  const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
+  drawChart(nextOption);
+  return true;
+};
+
+const getOption = () => currentOption.value;
+const getWidth = () => canvasWidth.value || 0;
+const getHeight = () => canvasHeight.value || 0;
+
+const clear = () => {
+  activePointer.value = null;
+  chartInstance.value = null;
+  const ctx = uni.createCanvasContext(cid, instance);
+  if (ctx) {
+    ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+    ctx.draw && ctx.draw();
+  }
+  return true;
+};
+
+const dispose = () => {
+  if (disposed.value) return true;
+  disposed.value = true;
+  eventRegistry.clear();
+  clear();
+  return true;
+};
+
+const resize = () => {
+  if (disposed.value) return false;
+  init();
+  return true;
+};
+
+const showLoading = (textOrOptions = 'Loading...') => {
+  if (disposed.value) return false;
+  loading.value = true;
+  const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
+  const ctx = uni.createCanvasContext(cid, instance);
+  ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+  ctx.setFillStyle('rgba(255,255,255,0.86)');
+  ctx.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
+  ctx.setFillStyle('#64748b');
+  ctx.setFontSize && ctx.setFontSize(14);
+  ctx.setTextAlign && ctx.setTextAlign('center');
+  ctx.setTextBaseline && ctx.setTextBaseline('middle');
+  ctx.fillText(text, canvasWidth.value / 2, canvasHeight.value / 2);
+  ctx.draw && ctx.draw();
+  return true;
+};
+
+const hideLoading = () => {
+  if (disposed.value) return false;
+  loading.value = false;
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
+const on = (eventName, handler) => eventRegistry.on(eventName, handler);
+const off = (eventName, handler) => eventRegistry.off(eventName, handler);
+
+const updateActivePointerByDataIndex = (dataIndex) => {
+  const index = Number(dataIndex);
+  const chart = chartInstance.value;
+  if (!Number.isInteger(index) || !chart || !chart.seriesPoints || index < 0 || index >= (chart.indicators || []).length) return false;
+  const point = (chart.seriesPoints[0]?.points || [])[index];
+  if (!point) return false;
+  const pointer = buildRadarPointerPayload(point.x, point.y);
+  if (!pointer) return false;
+  activePointer.value = pointer;
+  emitChartEvent('tooltipShow', pointer);
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
+const dispatchAction = (action = {}) => {
+  if (disposed.value || !action || !action.type) return false;
+  if (action.type === 'hideTip') {
+    activePointer.value = null;
+    drawChart(currentOption.value || props.option);
+    return true;
+  }
+  if (action.type === 'showTip') {
+    return updateActivePointerByDataIndex(action.dataIndex);
+  }
+  return false;
+};
+
 // 监听option变化
 watch(
   () => props.option,
   (newVal) => {
-    if (isMount.value) {
-      drawChart();
+    if (isMount.value && !disposed.value) {
+      drawChart(newVal);
     }
   },
   { deep: true }
@@ -1144,6 +1237,18 @@ onUnmounted(() => {
 
 // 暴露方法给父组件
 defineExpose({
+  setOption,
+  getOption,
+  resize,
+  clear,
+  dispose,
+  showLoading,
+  hideLoading,
+  getWidth,
+  getHeight,
+  on,
+  off,
+  dispatchAction,
   updateData,
   getChartInstance
 });

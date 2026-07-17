@@ -13,6 +13,7 @@
 
 <script>
 import chartHelper from '../../libs/util/chartHelper.js';
+import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
 
 export default {
   name: 'ly-charts-scatter',
@@ -45,6 +46,10 @@ export default {
       seriesData: [],
       activePointer: null,
       plotGrid: null,
+      currentOption: {},
+      disposed: false,
+      loading: false,
+      eventRegistry: createEventRegistry(),
       // 触摸相关信息
       touchInfo: {
         startX: 0,
@@ -66,7 +71,7 @@ export default {
   watch: {
     option: {
       handler(newOption) {
-        this.drawChart(newOption);
+        if (!this.disposed) this.drawChart(newOption);
       },
       deep: true
     }
@@ -103,7 +108,10 @@ export default {
     },
     
     drawChart(option) {
+      if (this.disposed) return;
       if (!this.ctx || !option) return;
+      option = normalizeOption(option);
+      this.currentOption = option;
       
       try {
         // 清空画布
@@ -401,8 +409,8 @@ export default {
     },
     drawScatterAxisPointer() {
       if (!this.activePointer || !this.ctx || !this.plotGrid) return;
-      if (!this.shouldShowAxisPointer(this.option)) return;
-      const axisPointer = this.option?.tooltip?.axisPointer || {};
+      if (!this.shouldShowAxisPointer(this.currentOption)) return;
+      const axisPointer = this.currentOption?.tooltip?.axisPointer || {};
       const lineColor = axisPointer.lineStyle?.color || 'rgba(71, 85, 105, 0.75)';
       const lineWidth = axisPointer.lineStyle?.width || 1;
       const g = this.plotGrid;
@@ -433,7 +441,7 @@ export default {
     },
     drawScatterTooltipBox() {
       if (!this.activePointer || !this.ctx) return;
-      if (!this.shouldShowTooltipContent(this.option)) return;
+      if (!this.shouldShowTooltipContent(this.currentOption)) return;
       const pointer = this.activePointer;
       const lines = this.getScatterTooltipLines(pointer);
       const paddingX = 10;
@@ -455,7 +463,7 @@ export default {
       if (boxY + boxHeight > this.canvasHeight - 8) {
         boxY = Math.max(8, this.canvasHeight - boxHeight - 8);
       }
-      const tooltip = this.option?.tooltip || {};
+      const tooltip = this.currentOption?.tooltip || {};
       this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)');
       this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
       this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)');
@@ -485,9 +493,9 @@ export default {
       this.touchInfo.lastY = touchY;
       this.activePointer = pointer;
       if (emitTooltip) {
-        this.$emit('tooltipShow', pointer);
+        this.emitChartEvent('tooltipShow', pointer);
       }
-      this.drawChart(this.option);
+      this.drawChart(this.currentOption || this.option);
       return pointer;
     },
     handleTouchStart(e) {
@@ -515,28 +523,111 @@ export default {
         Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
         Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP;
       if (!moved && pointer) {
-        this.$emit('click', pointer);
+        this.emitChartEvent('click', pointer);
       }
     },
     setOption(option, notMerge = false) {
-      if (notMerge) {
-        this.drawChart(option);
-      } else {
-        // 简单合并配置
-        try {
-          const newOption = JSON.parse(JSON.stringify(this.option));
-          Object.assign(newOption, option);
-          this.drawChart(newOption);
-        } catch (error) {
-          console.error('合并配置失败:', error);
-          this.drawChart(option);
-        }
-      }
+      if (this.disposed) return false;
+      const nextOption = mergeOptions(this.currentOption || this.option, option, notMerge);
+      this.drawChart(nextOption);
+      return true;
     },
     
     // 提供类似 ECharts 的 resize 方法
     resize() {
+      if (this.disposed) return false;
       this.initCanvas();
+      return true;
+    },
+    emitChartEvent(eventName, payload) {
+      this.$emit(eventName, payload);
+      this.eventRegistry.emit(eventName, payload);
+    },
+    getOption() {
+      return this.currentOption;
+    },
+    getWidth() {
+      return this.canvasWidth || 0;
+    },
+    getHeight() {
+      return this.canvasHeight || 0;
+    },
+    clear() {
+      this.activePointer = null;
+      this.seriesData = [];
+      if (this.ctx) {
+        this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+        this.ctx.draw && this.ctx.draw();
+      }
+      return true;
+    },
+    dispose() {
+      if (this.disposed) return true;
+      this.disposed = true;
+      this.eventRegistry.clear();
+      this.clear();
+      return true;
+    },
+    showLoading(textOrOptions = 'Loading...') {
+      if (this.disposed || !this.ctx) return false;
+      this.loading = true;
+      const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
+      this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.ctx.setFillStyle('rgba(255,255,255,0.86)');
+      this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.ctx.setFillStyle('#64748b');
+      this.ctx.setFontSize && this.ctx.setFontSize(14);
+      this.ctx.setTextAlign && this.ctx.setTextAlign('center');
+      this.ctx.setTextBaseline && this.ctx.setTextBaseline('middle');
+      this.ctx.fillText(text, this.canvasWidth / 2, this.canvasHeight / 2);
+      this.ctx.draw && this.ctx.draw();
+      return true;
+    },
+    hideLoading() {
+      if (this.disposed) return false;
+      this.loading = false;
+      this.drawChart(this.currentOption || this.option);
+      return true;
+    },
+    on(eventName, handler) {
+      return this.eventRegistry.on(eventName, handler);
+    },
+    off(eventName, handler) {
+      return this.eventRegistry.off(eventName, handler);
+    },
+    updateActivePointerByDataIndex(dataIndex, seriesIndex = 0) {
+      const index = Number(dataIndex);
+      if (!Number.isInteger(index) || index < 0) return false;
+      const series = this.seriesData[seriesIndex] || this.seriesData[0];
+      const point = series?.points?.[index];
+      if (!point) return false;
+      this.activePointer = {
+        componentType: 'series',
+        seriesType: 'scatter',
+        seriesName: series.name,
+        name: point.name,
+        dataIndex: index,
+        value: point.value,
+        color: point.color || series.color,
+        x: point.x,
+        y: point.y,
+        event: { offsetX: point.x, offsetY: point.y }
+      };
+      this.emitChartEvent('tooltipShow', this.activePointer);
+      this.drawChart(this.currentOption || this.option);
+      return true;
+    },
+    dispatchAction(action = {}) {
+      if (this.disposed || !action || !action.type) return false;
+      if (action.type === 'hideTip') {
+        this.activePointer = null;
+        this.drawChart(this.currentOption || this.option);
+        return true;
+      }
+      if (action.type === 'showTip') {
+        return this.updateActivePointerByDataIndex(action.dataIndex, action.seriesIndex || 0);
+      }
+      return false;
     }
   }
 };
