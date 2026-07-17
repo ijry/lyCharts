@@ -1,0 +1,124 @@
+export function normalizeOption(option : any) : any {
+  if (option == null) return {}
+  let normalized = option
+  try {
+    normalized = JSON.parse(JSON.stringify(option))
+  } catch (error) {
+    normalized = option
+  }
+
+  const optionObject = normalized as UTSJSONObject
+  const datasetValue = optionObject.get('dataset')
+  if (datasetValue == null) return normalized
+
+  const dataset = datasetValue as UTSJSONObject
+  const sourceValue = dataset.get('source')
+  if (!Array.isArray(sourceValue)) return normalized
+
+  const source = sourceValue as any[]
+  if (source.length == 0) return normalized
+
+  const first = source[0]
+  const rows = Array.isArray(first) ? source.slice(1) : source
+  const dimensions = [] as string[]
+  if (Array.isArray(first)) {
+    const firstRow = first as any[]
+    firstRow.forEach((item : any, index : number) => {
+      dimensions.push(item != null ? `${item}` : `${index}`)
+    })
+  }
+
+  const seriesValue = optionObject.get('series')
+  if (!Array.isArray(seriesValue)) return normalized
+
+  const series = seriesValue as any[]
+  const normalizedSeries = [] as any[]
+  let xAxisData = null as any[] | null
+
+  series.forEach((serie : any) => {
+    const serieObject = serie as UTSJSONObject
+    if (Array.isArray(serieObject.get('data')) || serieObject.get('encode') == null) {
+      normalizedSeries.push(serie)
+      return
+    }
+
+    const encode = serieObject.get('encode') as UTSJSONObject
+    const xKey = getEncodeValue(encode, ['x', 'itemName', 'name'])
+    const yKey = getEncodeValue(encode, ['y', 'value'])
+    const typeValue = serieObject.get('type')
+    const nextSerie = JSON.parse(JSON.stringify(serie)) as UTSJSONObject
+    const data = [] as any[]
+
+    rows.forEach((row : any) => {
+      if (`${typeValue}` == 'scatter') {
+        data.push([readRowValue(row, dimensions, xKey), readRowValue(row, dimensions, yKey)])
+      } else if (`${typeValue}` == 'pie') {
+        data.push({ name: readRowValue(row, dimensions, xKey), value: readRowValue(row, dimensions, yKey) })
+      } else {
+        data.push(readRowValue(row, dimensions, yKey))
+      }
+    })
+
+    nextSerie.set('data', data)
+    normalizedSeries.push(nextSerie)
+
+    if (xAxisData == null && xKey != null) {
+      xAxisData = rows.map((row : any) => readRowValue(row, dimensions, xKey))
+    }
+  })
+
+  optionObject.set('series', normalizedSeries)
+
+  if (xAxisData != null) {
+    const xAxisValue = optionObject.get('xAxis')
+    const xAxis = xAxisValue != null ? xAxisValue as UTSJSONObject : {} as UTSJSONObject
+    if (!Array.isArray(xAxis.get('data'))) {
+      xAxis.set('data', xAxisData)
+      optionObject.set('xAxis', xAxis)
+    }
+  }
+
+  return normalized
+}
+
+export function mergeOptions(baseOption : any, nextOption : any, notMerge : boolean = false) : any {
+  if (notMerge) return normalizeOption(nextOption)
+  let merged = {} as UTSJSONObject
+  try {
+    merged = JSON.parse(JSON.stringify(baseOption != null ? baseOption : {})) as UTSJSONObject
+  } catch (error) {
+    merged = {} as UTSJSONObject
+  }
+  if (nextOption != null) {
+    Object.assign(merged, nextOption)
+  }
+  return normalizeOption(merged)
+}
+
+function getEncodeValue(encode : UTSJSONObject, keys : string[]) : any {
+  for (let i = 0; i < keys.length; i++) {
+    const value = encode.get(keys[i])
+    if (Array.isArray(value)) {
+      const arr = value as any[]
+      return arr.length > 0 ? arr[0] : null
+    }
+    if (value != null) return value
+  }
+  return null
+}
+
+function readRowValue(row : any, dimensions : string[], key : any) : any {
+  if (key == null) return null
+  if (Array.isArray(row)) {
+    const arr = row as any[]
+    let index = -1
+    if (typeof key == 'number') {
+      index = key as number
+    } else {
+      index = dimensions.indexOf(`${key}`)
+    }
+    return index >= 0 && index < arr.length ? arr[index] : null
+  }
+  const rowObject = row as UTSJSONObject
+  return rowObject.get(`${key}`)
+}
