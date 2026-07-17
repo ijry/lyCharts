@@ -1,3 +1,6 @@
+## 26.2.3
+feat: add ECharts runtime API compatibility
+
 ## 26.2.2
 feat: 为 line/bar/scatter/pie/radar/gauge 补齐点击与拖动当前数据展示
 
