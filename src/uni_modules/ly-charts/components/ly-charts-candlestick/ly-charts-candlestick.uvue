@@ -17,6 +17,7 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
+import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-candlestick',
@@ -52,6 +53,10 @@ export default {
       zoomEnd: 100,
       renderState: null as any,
       activePointer: null as any,
+      currentOption: {} as any,
+      disposed: false,
+      loading: false,
+      eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
         startY: 0,
@@ -75,8 +80,10 @@ export default {
   watch: {
     option: {
       handler() {
-        this.syncZoomFromOption()
-        this.drawChart()
+        if (!this.disposed) {
+          this.syncZoomFromOption(this.option)
+          this.drawChart(this.option)
+        }
       },
       deep: true
     }
@@ -93,13 +100,15 @@ export default {
       this.ctx = canvasRef
       this.canvasWidth = event.width || canvasRef.getWidth()
       this.canvasHeight = event.height || canvasRef.getHeight()
-      this.syncZoomFromOption()
-      this.drawChart()
+      this.syncZoomFromOption(this.option)
+      this.drawChart(this.option)
     },
-    syncZoomFromOption() {
-      const option = this.option || {}
-      const hasZoom = Array.isArray(option.dataZoom) && option.dataZoom.length > 0
-      const zoom = hasZoom ? option.dataZoom[0] : {}
+    syncZoomFromOption(option : any = null) {
+      const sourceOption = normalizeOption(option != null ? option : this.option)
+      this.currentOption = sourceOption
+      const normalizedOption = sourceOption || {}
+      const hasZoom = Array.isArray(normalizedOption.dataZoom) && normalizedOption.dataZoom.length > 0
+      const zoom = hasZoom ? normalizedOption.dataZoom[0] : {}
       const start = zoom.start !== undefined ? Number(zoom.start) : 0
       const end = zoom.end !== undefined ? Number(zoom.end) : 100
       this.zoomStart = Math.max(0, Math.min(100, start))
@@ -221,7 +230,7 @@ export default {
       return source || {}
     },
     getSeriesCollection() {
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const series = Array.isArray(option.series) ? option.series : []
       let candlestickSeries = null as any
       const lineSeries = [] as any[]
@@ -254,7 +263,7 @@ export default {
       })
     },
     drawTitle() {
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const title = option.title
       if (!title || !title.text) {
         return 0
@@ -294,7 +303,7 @@ export default {
       return height
     },
     createBaseGrid(titleHeight : number, showSlider : boolean) {
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const gridOptions = Array.isArray(option.grid) ? option.grid : [option.grid || {}]
       const firstGrid = gridOptions[0] || {}
       const grid = {
@@ -333,7 +342,7 @@ export default {
       }
     },
     createPanelLayout(baseGrid : any, hasVolume : boolean) {
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const gridOptions = Array.isArray(option.grid) ? option.grid : [option.grid || {}]
 
       if (gridOptions.length > 1) {
@@ -1154,16 +1163,16 @@ export default {
       this.touchInfo.lastY = touchY
       this.activePointer = this.buildPointerPayload(item, touchX, touchY, chartState)
       if (emitTooltip) {
-        this.$emit('tooltipShow', this.activePointer)
+        this.emitChartEvent('tooltipShow', this.activePointer)
       }
-      this.drawChart()
+      this.drawChart(this.currentOption)
       return this.activePointer
     },
     drawCrosshair(chartState : any) {
       if (!this.activePointer || !chartState) {
         return
       }
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const tooltip = option.tooltip || {}
       const axisPointer = tooltip.axisPointer || {}
       if (axisPointer.show === false) {
@@ -1226,7 +1235,7 @@ export default {
       if (!this.activePointer || !chartState) {
         return
       }
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const tooltip = option.tooltip || {}
       if (tooltip.show === false || tooltip.showContent === false) {
         return
@@ -1271,8 +1280,11 @@ export default {
         currentY += line.fontSize + lineGap
       })
     },
-    drawChart() {
-      if (!this.ctx || !this.option) {
+    drawChart(option : any = null) {
+      if (this.disposed) return
+      const nextOption = normalizeOption(option != null ? option : (this.currentOption != null ? this.currentOption : this.option))
+      this.currentOption = nextOption
+      if (!this.ctx || !nextOption) {
         return
       }
 
@@ -1287,7 +1299,7 @@ export default {
         return
       }
 
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const xAxisSource = option.xAxis || {}
       const yAxisSource = option.yAxis || {}
       const firstXAxis = this.getAxisOption(xAxisSource, 0)
@@ -1410,18 +1422,20 @@ export default {
       const safeEnd = Math.max(safeStart + 1, Math.min(100, Number(end)))
       this.zoomStart = safeStart
       this.zoomEnd = safeEnd
-      this.$emit('zoom', { start: this.zoomStart, end: this.zoomEnd })
-      this.drawChart()
+      this.emitChartEvent('zoom', { start: this.zoomStart, end: this.zoomEnd })
+      this.drawChart(this.currentOption)
     },
     setOption(option : any, notMerge : boolean = false) {
-      if (notMerge) {
-        this.drawChart()
-        return
-      }
-      this.drawChart()
+      if (this.disposed) return false
+      const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
+      this.syncZoomFromOption(nextOption)
+      this.drawChart(nextOption)
+      return true
     },
     resize() {
+      if (this.disposed) return false
       this.initCanvas()
+      return true
     },
     resolveSliderDragMode(x : number) {
       const selection = this.getSliderSelection()
@@ -1446,7 +1460,7 @@ export default {
       }
       const mode = this.touchInfo.sliderDragMode || 'move'
       const deltaPercent = ((x || 0) - this.touchInfo.startX) / Math.max(this.sliderRect.width, 1) * 100
-      const option = this.option || {}
+      const option = this.currentOption != null ? this.currentOption : this.option
       const dataZoom = Array.isArray(option.dataZoom) && option.dataZoom.length > 0 ? option.dataZoom[0] : {}
       const minSpan = Math.max(1, Number(dataZoom.minSpan || 5))
       const zoomSpan = this.touchInfo.originZoomEnd - this.touchInfo.originZoomStart
@@ -1543,7 +1557,7 @@ export default {
       if (this.touchInfo.draggingSlider) {
         this.touchInfo.draggingSlider = false
         this.touchInfo.sliderDragMode = ''
-        this.$emit('zoom', { start: this.zoomStart, end: this.zoomEnd })
+        this.emitChartEvent('zoom', { start: this.zoomStart, end: this.zoomEnd })
         return
       }
 
@@ -1561,8 +1575,8 @@ export default {
           category: markPoint.category,
           event: { offsetX: markPoint.centerX, offsetY: markPoint.centerY }
         }
-        this.$emit('click', payload)
-        this.$emit('tooltipShow', payload)
+        this.emitChartEvent('click', payload)
+        this.emitChartEvent('tooltipShow', payload)
         return
       }
 
@@ -1573,9 +1587,113 @@ export default {
 
       const payload = this.buildClickPayload(pointer, endX, endY)
       if (payload) {
-        this.$emit('click', payload)
-        this.$emit('tooltipShow', payload)
+        this.emitChartEvent('click', payload)
+        this.emitChartEvent('tooltipShow', payload)
       }
+    },
+    getOption() : any { return this.currentOption },
+    getWidth() : number { return this.canvasWidth },
+    getHeight() : number { return this.canvasHeight },
+    clear() : boolean {
+      this.activePointer = null
+      this.renderState = null
+      this.candleRegions = [] as any[]
+      this.volumeRegions = [] as any[]
+      this.markPointRegions = [] as any[]
+      if (this.ctx != null) {
+        this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+        this.ctx.draw()
+      }
+      return true
+    },
+    dispose() : boolean {
+      if (this.disposed) return true
+      this.disposed = true
+      this.eventHandlers = {} as UTSJSONObject
+      this.clear()
+      return true
+    },
+    showLoading(textOrOptions : any = 'Loading...') : boolean {
+      if (this.disposed || this.ctx == null) return false
+      this.loading = true
+      const text = typeof textOrOptions == 'string' ? `${textOrOptions}` : 'Loading...'
+      this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.setFillStyle('rgba(255,255,255,0.86)')
+      this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.setFillStyle('#64748b')
+      this.ctx.setFontSize(14)
+      this.ctx.setTextAlign('center')
+      this.ctx.setTextBaseline('middle')
+      this.ctx.fillText(text, this.canvasWidth / 2, this.canvasHeight / 2)
+      this.ctx.draw()
+      return true
+    },
+    hideLoading() : boolean {
+      if (this.disposed) return false
+      this.loading = false
+      this.drawChart(this.currentOption)
+      return true
+    },
+    on(eventName : string, handler : any) : boolean {
+      if (eventName == '' || handler == null) return false
+      const current = this.eventHandlers.get(eventName)
+      const handlers = Array.isArray(current) ? current as any[] : [] as any[]
+      handlers.push(handler)
+      this.eventHandlers.set(eventName, handlers)
+      return true
+    },
+    off(eventName : string, handler : any | null = null) : boolean {
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return false
+      if (handler == null) {
+        this.eventHandlers.set(eventName, [] as any[])
+        return true
+      }
+      this.eventHandlers.set(eventName, (current as any[]).filter((item : any) => item != handler))
+      return true
+    },
+    emitChartEvent(eventName : string, payload : any) {
+      this.$emit(eventName, payload)
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return
+      ;(current as any[]).forEach((handler : any) => {
+        try { handler(payload) } catch (error) { console.error('[ly-charts] event handler failed:', error) }
+      })
+    },
+    updateActivePointerByDataIndex(dataIndex : any) : boolean {
+      const index = typeof dataIndex == 'number' ? dataIndex as number : parseInt(`${dataIndex}`)
+      const chartState = this.renderState
+      if (index < 0 || !chartState || !chartState.visibleCandles || !chartState.visibleCandles.items) return false
+      let matched = null as any
+      chartState.visibleCandles.items.forEach((item : any) => {
+        if (matched == null && item.index === index) matched = item
+      })
+      if (matched == null) return false
+      const centerX = this.getCategoryCenter(matched.localIndex, chartState.visibleCandles.items.length, chartState.priceGrid)
+      const priceY = this.valueToY(matched.close, chartState.priceRange.min, chartState.priceRange.max, chartState.priceGrid)
+      this.activePointer = this.buildPointerPayload(matched, centerX, priceY, chartState)
+      this.emitChartEvent('tooltipShow', this.activePointer)
+      this.drawChart(this.currentOption)
+      return true
+    },
+    dispatchAction(action : any) : boolean {
+      if (this.disposed || action == null) return false
+      const typeValue = action.type
+      if (`${typeValue}` == 'hideTip') {
+        this.activePointer = null
+        this.drawChart(this.currentOption)
+        return true
+      }
+      if (`${typeValue}` == 'showTip') {
+        return this.updateActivePointerByDataIndex(action.dataIndex)
+      }
+      if (`${typeValue}` == 'dataZoom') {
+        const start = action.start != null ? action.start : this.zoomStart
+        const end = action.end != null ? action.end : this.zoomEnd
+        this.setZoom(Number(start), Number(end))
+        return true
+      }
+      return false
     }
   },
   mounted() {

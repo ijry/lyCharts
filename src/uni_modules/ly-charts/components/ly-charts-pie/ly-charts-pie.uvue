@@ -17,6 +17,7 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
+import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-pie',
@@ -44,6 +45,10 @@ export default {
       sectorData: [] as any[],
       pieMeta: null as any,
       activePointer: null as any,
+      currentOption: {} as any,
+      disposed: false,
+      loading: false,
+      eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
         startY: 0,
@@ -64,7 +69,7 @@ export default {
   watch: {
     option: {
       handler() {
-        this.drawChart()
+        if (!this.disposed) this.drawChart(this.option)
       },
       deep: true
     }
@@ -114,12 +119,15 @@ export default {
       if (!isFinite(n)) return '--'
       return `${n.toFixed(1)}%`
     },
-    drawChart() {
-      if (!this.ctx || !this.option) {
+    drawChart(option : any = null) {
+      if (this.disposed) return
+      const nextOption = normalizeOption(option != null ? option : this.option)
+      this.currentOption = nextOption
+      if (!this.ctx || !nextOption) {
         return
       }
 
-      const series = this.option.series && this.option.series.length > 0 ? this.option.series[0] : {}
+      const series = nextOption.series && nextOption.series.length > 0 ? nextOption.series[0] : {}
       const data = series.data || []
       if (!Array.isArray(data) || data.length === 0) {
         this.sectorData = []
@@ -129,22 +137,22 @@ export default {
       }
 
       this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
-      if (this.option.backgroundColor) {
-        this.ctx.setFillStyle(this.option.backgroundColor)
+      if (nextOption.backgroundColor) {
+        this.ctx.setFillStyle(nextOption.backgroundColor)
         this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight)
       }
 
       const grid = { top: 10, right: 20, bottom: 20, left: 20 }
       let titleHeight = 0
-      if (this.option.title && this.option.title.text) {
-        titleHeight = chartHelper.drawTitle(this.ctx, this.option.title, this.canvasWidth)
+      if (nextOption.title && nextOption.title.text) {
+        titleHeight = chartHelper.drawTitle(this.ctx, nextOption.title, this.canvasWidth)
         grid.top = Math.max(grid.top, titleHeight + 10)
       }
 
-      if (this.option.legend && this.option.legend.show !== false) {
+      if (nextOption.legend && nextOption.legend.show !== false) {
         chartHelper.drawLegend(
           this.ctx,
-          { ...this.option.legend, data: data.map((item : any) => item.name || '') },
+          { ...nextOption.legend, data: data.map((item : any) => item.name || '') },
           grid,
           this.canvasWidth,
           data.map((item : any, index : number) => item.itemStyle && item.itemStyle.color ? item.itemStyle.color : chartHelper.getColor(index)),
@@ -327,7 +335,7 @@ export default {
     },
     drawPieTooltipBox() {
       if (!this.activePointer || !this.ctx) return
-      if (!this.shouldShowTooltipContent(this.option)) return
+      if (!this.shouldShowTooltipContent(this.currentOption)) return
       const pointer = this.activePointer
       const lines = this.getPieTooltipLines(pointer)
       const paddingX = 10
@@ -351,7 +359,7 @@ export default {
       if (boxY + boxHeight > this.canvasHeight - 8) {
         boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
       }
-      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      const tooltip = this.currentOption && this.currentOption.tooltip ? this.currentOption.tooltip : {}
       this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
       this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
       this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
@@ -380,9 +388,9 @@ export default {
       this.touchInfo.lastY = touchY
       this.activePointer = pointer
       if (emitTooltip) {
-        this.$emit('tooltipShow', pointer)
+        this.emitChartEvent('tooltipShow', pointer)
       }
-      this.drawChart()
+      this.drawChart(this.currentOption)
       return pointer
     },
     handleTouchStart(event : any) {
@@ -412,17 +420,128 @@ export default {
         Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
         Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
       if (!moved && pointer) {
-        this.$emit('click', pointer)
+        this.emitChartEvent('click', pointer)
       }
     },
     updateData(data : any[]) {
-      if (this.option.series && this.option.series[0]) {
-        this.option.series[0].data = data
-        this.drawChart()
-      }
+      const current = this.currentOption != null ? this.currentOption : this.option
+      const series = current.series && current.series[0] ? current.series[0] : {}
+      const nextOption = mergeOptions(current, { series: [{ ...series, data }] }, false)
+      this.drawChart(nextOption)
     },
     getChartInstance() {
       return this.pieMeta
+    },
+    setOption(option : any, notMerge : boolean = false) {
+      if (this.disposed) return false
+      const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
+      this.drawChart(nextOption)
+      return true
+    },
+    resize() {
+      if (this.disposed) return false
+      this.initCanvas()
+      return true
+    },
+    getOption() : any {
+      return this.currentOption
+    },
+    getWidth() : number {
+      return this.canvasWidth
+    },
+    getHeight() : number {
+      return this.canvasHeight
+    },
+    clear() : boolean {
+      this.activePointer = null
+      this.sectorData = [] as any[]
+      this.pieMeta = null
+      if (this.ctx != null) {
+        this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+        this.ctx.draw()
+      }
+      return true
+    },
+    dispose() : boolean {
+      if (this.disposed) return true
+      this.disposed = true
+      this.eventHandlers = {} as UTSJSONObject
+      this.clear()
+      return true
+    },
+    showLoading(textOrOptions : any = 'Loading...') : boolean {
+      if (this.disposed || this.ctx == null) return false
+      this.loading = true
+      const text = typeof textOrOptions == 'string' ? `${textOrOptions}` : 'Loading...'
+      this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.setFillStyle('rgba(255,255,255,0.86)')
+      this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.setFillStyle('#64748b')
+      this.ctx.setFontSize(14)
+      this.ctx.setTextAlign('center')
+      this.ctx.setTextBaseline('middle')
+      this.ctx.fillText(text, this.canvasWidth / 2, this.canvasHeight / 2)
+      this.ctx.draw()
+      return true
+    },
+    hideLoading() : boolean {
+      if (this.disposed) return false
+      this.loading = false
+      this.drawChart(this.currentOption)
+      return true
+    },
+    on(eventName : string, handler : any) : boolean {
+      if (eventName == '' || handler == null) return false
+      const current = this.eventHandlers.get(eventName)
+      const handlers = Array.isArray(current) ? current as any[] : [] as any[]
+      handlers.push(handler)
+      this.eventHandlers.set(eventName, handlers)
+      return true
+    },
+    off(eventName : string, handler : any | null = null) : boolean {
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return false
+      if (handler == null) {
+        this.eventHandlers.set(eventName, [] as any[])
+        return true
+      }
+      this.eventHandlers.set(eventName, (current as any[]).filter((item : any) => item != handler))
+      return true
+    },
+    emitChartEvent(eventName : string, payload : any) {
+      this.$emit(eventName, payload)
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return
+      ;(current as any[]).forEach((handler : any) => {
+        try { handler(payload) } catch (error) { console.error('[ly-charts] event handler failed:', error) }
+      })
+    },
+    updateActivePointerByDataIndex(dataIndex : any) : boolean {
+      const index = typeof dataIndex == 'number' ? dataIndex as number : parseInt(`${dataIndex}`)
+      if (index < 0 || index >= this.sectorData.length) return false
+      const sector = this.sectorData[index]
+      const radius = ((sector.outerRadius || 0) + (sector.innerRadius || 0)) / 2 || (sector.outerRadius || 0) * 0.65
+      const x = sector.centerX + radius * Math.cos(sector.middleAngle)
+      const y = sector.centerY + radius * Math.sin(sector.middleAngle)
+      const pointer = this.buildPiePointerPayload(x, y)
+      if (pointer == null) return false
+      this.activePointer = pointer
+      this.emitChartEvent('tooltipShow', pointer)
+      this.drawChart(this.currentOption)
+      return true
+    },
+    dispatchAction(action : any) : boolean {
+      if (this.disposed || action == null) return false
+      const typeValue = action.type
+      if (`${typeValue}` == 'hideTip') {
+        this.activePointer = null
+        this.drawChart(this.currentOption)
+        return true
+      }
+      if (`${typeValue}` == 'showTip') {
+        return this.updateActivePointerByDataIndex(action.dataIndex)
+      }
+      return false
     }
   },
   mounted() {

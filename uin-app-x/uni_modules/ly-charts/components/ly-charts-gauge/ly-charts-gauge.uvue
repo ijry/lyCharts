@@ -25,6 +25,7 @@ interface LyGaugeCanvasRef {
 }
 
 import chartHelper from '../../libs/uvue/chartHelper.uts'
+import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-gauge',
@@ -54,6 +55,10 @@ export default {
       isInited: false,
       gaugeMeta: null as any,
       activePointer: null as any,
+      currentOption: {} as any,
+      disposed: false,
+      loading: false,
+      eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
         startY: 0,
@@ -74,7 +79,7 @@ export default {
   watch: {
     option: {
       handler(newVal : any) {
-        this.updateChart(newVal)
+        if (!this.disposed) this.updateChart(newVal)
       },
       deep: true
     }
@@ -107,6 +112,7 @@ export default {
       return normalizedAngle * Math.PI
     },
     drawChart() {
+      if (this.disposed) return
       const ctx = this.ctx
       if (ctx == null) {
         return
@@ -149,7 +155,7 @@ export default {
     drawGauge(ctx : any) {
       const gaugeCtx = ctx as ComponentPublicInstance
       gaugeCtx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
-      const optionObject = this.option as UTSJSONObject
+      const optionObject = (this.currentOption != null ? this.currentOption : this.option) as UTSJSONObject
       const seriesValue = optionObject.get('series')
       const series = Array.isArray(seriesValue) ? seriesValue : [] as any[]
       const firstSeries = series.length > 0 ? series[0] as UTSJSONObject : null
@@ -317,7 +323,7 @@ export default {
       if (ctx == null || activePointer == null) {
         return
       }
-      if (!this.shouldShowTooltipContent(this.option)) {
+      if (!this.shouldShowTooltipContent(this.currentOption)) {
         return
       }
       const pointerObject = activePointer as UTSJSONObject
@@ -357,7 +363,7 @@ export default {
       if (boxY + boxHeight > this.canvasHeight - 8) {
         boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
       }
-      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const optionObject = (this.currentOption != null ? this.currentOption : {}) as UTSJSONObject
       const tooltipValue = optionObject.get('tooltip')
       const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
       const backgroundColorValue = tooltip.get('backgroundColor')
@@ -412,7 +418,7 @@ export default {
       touchInfoObject.set('lastY', touchY)
       this.activePointer = pointer
       if (emitTooltip) {
-        this.$emit('tooltipShow', pointer)
+        this.emitChartEvent('tooltipShow', pointer)
       }
       this.drawChart()
       return pointer
@@ -467,19 +473,132 @@ export default {
       const startY = typeof startYValue == 'number' ? startYValue as number : 0
       const moved = Math.abs(endX - startX) > this.TAP_SLOP || Math.abs(endY - startY) > this.TAP_SLOP
       if (!moved && finalPointer != null) {
-        this.$emit('click', finalPointer)
+        this.emitChartEvent('click', finalPointer)
       }
     },
     updateChart(option : any) {
-      if (this.ctx == null || option == null) {
-        return
-      }
+      if (this.disposed) return false
+      this.currentOption = normalizeOption(option)
+      if (this.ctx == null || this.currentOption == null) return false
       this.isInited = true
       this.progressValue = [] as any[]
       this.drawChart()
+      return true
     },
     refresh() {
+      if (this.disposed) return false
       this.drawChart()
+      return true
+    },
+    setOption(option : any, notMerge : boolean = false) : boolean {
+      if (this.disposed) return false
+      const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
+      return this.updateChart(nextOption)
+    },
+    resize() : boolean {
+      if (this.disposed) return false
+      this.init()
+      return true
+    },
+    getOption() : any { return this.currentOption },
+    getWidth() : number { return this.canvasWidth },
+    getHeight() : number { return this.canvasHeight },
+    clear() : boolean {
+      this.activePointer = null
+      this.gaugeMeta = null
+      if (this.animationTimer > 0) {
+        clearInterval(this.animationTimer)
+        this.animationTimer = 0
+      }
+      if (this.ctx != null) {
+        this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        this.ctx.$callMethod('draw')
+      }
+      return true
+    },
+    dispose() : boolean {
+      if (this.disposed) return true
+      this.disposed = true
+      this.eventHandlers = {} as UTSJSONObject
+      this.clear()
+      return true
+    },
+    showLoading(textOrOptions : any = 'Loading...') : boolean {
+      if (this.disposed || this.ctx == null) return false
+      this.loading = true
+      const text = typeof textOrOptions == 'string' ? `${textOrOptions}` : 'Loading...'
+      this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.$callMethod('setFillStyle', 'rgba(255,255,255,0.86)')
+      this.ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.$callMethod('setFillStyle', '#64748b')
+      this.ctx.$callMethod('setFontSize', 14)
+      this.ctx.$callMethod('setTextAlign', 'center')
+      this.ctx.$callMethod('setTextBaseline', 'middle')
+      this.ctx.$callMethod('fillText', text, this.canvasWidth / 2, this.canvasHeight / 2)
+      this.ctx.$callMethod('draw')
+      return true
+    },
+    hideLoading() : boolean {
+      if (this.disposed) return false
+      this.loading = false
+      this.drawChart()
+      return true
+    },
+    on(eventName : string, handler : any) : boolean {
+      if (eventName == '' || handler == null) return false
+      const current = this.eventHandlers.get(eventName)
+      const handlers = Array.isArray(current) ? current as any[] : [] as any[]
+      handlers.push(handler)
+      this.eventHandlers.set(eventName, handlers)
+      return true
+    },
+    off(eventName : string, handler : any | null = null) : boolean {
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return false
+      if (handler == null) {
+        this.eventHandlers.set(eventName, [] as any[])
+        return true
+      }
+      this.eventHandlers.set(eventName, (current as any[]).filter((item : any) => item != handler))
+      return true
+    },
+    emitChartEvent(eventName : string, payload : any) {
+      this.$emit(eventName, payload)
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return
+      ;(current as any[]).forEach((handler : any) => {
+        try { handler(payload) } catch (error) { console.error('[ly-charts] event handler failed:', error) }
+      })
+    },
+    updateActivePointerByDataIndex(dataIndex : any) : boolean {
+      const index = typeof dataIndex == 'number' ? dataIndex as number : parseInt(`${dataIndex}`)
+      if (index < 0 || this.gaugeMeta == null) return false
+      const meta = this.gaugeMeta as UTSJSONObject
+      const xValue = meta.get('centerX')
+      const yValue = meta.get('centerY')
+      const x = typeof xValue == 'number' ? xValue as number : 0
+      const y = typeof yValue == 'number' ? yValue as number : 0
+      const pointer = this.buildGaugePointer(x, y)
+      if (pointer == null) return false
+      ;(pointer as UTSJSONObject).set('dataIndex', index)
+      this.activePointer = pointer
+      this.emitChartEvent('tooltipShow', pointer)
+      this.drawChart()
+      return true
+    },
+    dispatchAction(action : any) : boolean {
+      if (this.disposed || action == null) return false
+      const actionObject = action as UTSJSONObject
+      const typeValue = actionObject.get('type')
+      if (`${typeValue}` == 'hideTip') {
+        this.activePointer = null
+        this.drawChart()
+        return true
+      }
+      if (`${typeValue}` == 'showTip') {
+        return this.updateActivePointerByDataIndex(actionObject.get('dataIndex'))
+      }
+      return false
     }
   },
   mounted() {

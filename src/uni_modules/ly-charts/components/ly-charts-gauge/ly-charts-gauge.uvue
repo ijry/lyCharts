@@ -17,6 +17,7 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
+import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-gauge',
@@ -46,6 +47,10 @@ export default {
       isInited: false,
       gaugeMeta: null as any,
       activePointer: null as any,
+      currentOption: {} as any,
+      disposed: false,
+      loading: false,
+      eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
         startY: 0,
@@ -66,7 +71,7 @@ export default {
   watch: {
     option: {
       handler(newVal : any) {
-        this.updateChart(newVal)
+        if (!this.disposed) this.updateChart(newVal)
       },
       deep: true
     }
@@ -94,6 +99,7 @@ export default {
       return normalizedAngle * Math.PI
     },
     drawChart() {
+      if (this.disposed) return
       if (!this.ctx) {
         return
       }
@@ -104,7 +110,8 @@ export default {
       const height = this.canvasHeight
       const centerX = width / 2
       const centerY = height / 2
-      const series = this.option.series && this.option.series.length > 0 ? this.option.series[0] : {}
+      const option = this.currentOption != null ? this.currentOption : this.option
+      const series = option.series && option.series.length > 0 ? option.series[0] : {}
       const data = series.data && series.data.length > 0 ? series.data : [{ value: 0 }]
       const values = data.map((item : any, index : number) => {
         if (this.isInited && this.progressValue[index] !== undefined) {
@@ -468,7 +475,7 @@ export default {
     },
     drawGaugeTooltipBox() {
       if (!this.activePointer || !this.ctx) return
-      if (!this.shouldShowTooltipContent(this.option)) return
+      if (!this.shouldShowTooltipContent(this.currentOption)) return
       const pointer = this.activePointer
       const lines = this.getGaugeTooltipLines(pointer)
       if (!lines.length) return
@@ -493,7 +500,7 @@ export default {
       if (boxY + boxHeight > this.canvasHeight - 8) {
         boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
       }
-      const tooltip = this.option && this.option.tooltip ? this.option.tooltip : {}
+      const tooltip = this.currentOption && this.currentOption.tooltip ? this.currentOption.tooltip : {}
       this.ctx.setFillStyle(tooltip.backgroundColor || 'rgba(15, 23, 42, 0.88)')
       this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
       this.ctx.setStrokeStyle(tooltip.borderColor || 'rgba(148, 163, 184, 0.5)')
@@ -523,7 +530,7 @@ export default {
       this.touchInfo.lastY = touchY
       this.activePointer = pointer
       if (emitTooltip) {
-        this.$emit('tooltipShow', pointer)
+        this.emitChartEvent('tooltipShow', pointer)
       }
       this.drawChart()
       return pointer
@@ -555,14 +562,17 @@ export default {
         Math.abs(endX - this.touchInfo.startX) > this.TAP_SLOP ||
         Math.abs(endY - this.touchInfo.startY) > this.TAP_SLOP
       if (!moved && pointer) {
-        this.$emit('click', pointer)
+        this.emitChartEvent('click', pointer)
       }
     },
     updateChart(option : any) {
-      if (!this.ctx || !option) {
+      if (this.disposed) return false
+      const nextOption = normalizeOption(option)
+      this.currentOption = nextOption
+      if (!this.ctx || !nextOption) {
         return
       }
-      const series = option.series && option.series.length > 0 ? option.series[0] : {}
+      const series = nextOption.series && nextOption.series.length > 0 ? nextOption.series[0] : {}
       const data = series.data && series.data.length > 0 ? series.data : [{ value: 0 }]
       const values = data.map((item : any) => item.value || 0)
       const detail = series.detail || { show: true, fontSize: 20, offsetCenter: [0, 0] }
@@ -573,7 +583,7 @@ export default {
           clearInterval(this.animationTimer)
         }
         const startTime = Date.now()
-        const globalDuration = option.animationDuration !== undefined ? option.animationDuration : 1000
+        const globalDuration = nextOption.animationDuration !== undefined ? nextOption.animationDuration : 1000
         const duration = series.animationDuration !== undefined ? series.animationDuration : globalDuration
         const startValues = this.progressValue.length > 0 ? this.progressValue.map((item : any) => Number(item)) : new Array(values.length).fill(0)
         this.animationTimer = setInterval(() => {
@@ -594,9 +604,118 @@ export default {
         this.progressValue = [...values]
         this.drawChart()
       }
+      return true
     },
     refresh() {
+      if (this.disposed) return false
       this.drawChart()
+      return true
+    },
+    setOption(option : any, notMerge : boolean = false) {
+      if (this.disposed) return false
+      const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
+      return this.updateChart(nextOption)
+    },
+    resize() {
+      if (this.disposed) return false
+      this.init()
+      return true
+    },
+    getOption() : any { return this.currentOption },
+    getWidth() : number { return this.canvasWidth },
+    getHeight() : number { return this.canvasHeight },
+    clear() : boolean {
+      this.activePointer = null
+      this.gaugeMeta = null
+      if (this.animationTimer) {
+        clearInterval(this.animationTimer)
+        this.animationTimer = null
+      }
+      if (this.ctx != null) {
+        this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+        this.ctx.draw()
+      }
+      return true
+    },
+    dispose() : boolean {
+      if (this.disposed) return true
+      this.disposed = true
+      this.eventHandlers = {} as UTSJSONObject
+      this.clear()
+      return true
+    },
+    showLoading(textOrOptions : any = 'Loading...') : boolean {
+      if (this.disposed || this.ctx == null) return false
+      this.loading = true
+      const text = typeof textOrOptions == 'string' ? `${textOrOptions}` : 'Loading...'
+      this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.setFillStyle('rgba(255,255,255,0.86)')
+      this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.setFillStyle('#64748b')
+      this.ctx.setFontSize(14)
+      this.ctx.setTextAlign('center')
+      this.ctx.setTextBaseline('middle')
+      this.ctx.fillText(text, this.canvasWidth / 2, this.canvasHeight / 2)
+      this.ctx.draw()
+      return true
+    },
+    hideLoading() : boolean {
+      if (this.disposed) return false
+      this.loading = false
+      this.drawChart()
+      return true
+    },
+    on(eventName : string, handler : any) : boolean {
+      if (eventName == '' || handler == null) return false
+      const current = this.eventHandlers.get(eventName)
+      const handlers = Array.isArray(current) ? current as any[] : [] as any[]
+      handlers.push(handler)
+      this.eventHandlers.set(eventName, handlers)
+      return true
+    },
+    off(eventName : string, handler : any | null = null) : boolean {
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return false
+      if (handler == null) {
+        this.eventHandlers.set(eventName, [] as any[])
+        return true
+      }
+      this.eventHandlers.set(eventName, (current as any[]).filter((item : any) => item != handler))
+      return true
+    },
+    emitChartEvent(eventName : string, payload : any) {
+      this.$emit(eventName, payload)
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return
+      ;(current as any[]).forEach((handler : any) => {
+        try { handler(payload) } catch (error) { console.error('[ly-charts] event handler failed:', error) }
+      })
+    },
+    updateActivePointerByDataIndex(dataIndex : any) : boolean {
+      const index = typeof dataIndex == 'number' ? dataIndex as number : parseInt(`${dataIndex}`)
+      if (index < 0 || this.gaugeMeta == null) return false
+      const x = this.gaugeMeta.centerX
+      const y = this.gaugeMeta.centerY
+      const pointer = this.buildGaugePointer(x, y)
+      if (pointer == null) return false
+      pointer.dataIndex = index
+      this.activePointer = pointer
+      this.emitChartEvent('tooltipShow', pointer)
+      this.drawChart()
+      return true
+    },
+    dispatchAction(action : any) : boolean {
+      if (this.disposed || action == null) return false
+      const typeValue = action.type
+      if (`${typeValue}` == 'hideTip') {
+        this.activePointer = null
+        this.drawChart()
+        return true
+      }
+      if (`${typeValue}` == 'showTip') {
+        return this.updateActivePointerByDataIndex(action.dataIndex)
+      }
+      return false
     }
   },
   mounted() {
