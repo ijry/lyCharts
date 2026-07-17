@@ -25,6 +25,7 @@ interface LyScatterCanvasRef {
 }
 
 import chartHelper from '../../libs/uvue/chartHelper.uts'
+import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-scatter',
@@ -53,6 +54,10 @@ export default {
       seriesData: [] as any[],
       activePointer: null as UTSJSONObject | null,
       plotGrid: null as UTSJSONObject | null,
+      currentOption: {} as any,
+      disposed: false,
+      loading: false,
+      eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
         startY: 0,
@@ -73,7 +78,7 @@ export default {
   watch: {
     option: {
       handler(newOption : any) {
-        this.drawChart(newOption)
+        if (!this.disposed) this.drawChart(newOption)
       },
       deep: true
     }
@@ -98,11 +103,14 @@ export default {
       this.drawChart(this.option)
     },
     drawChart(option : any) {
+      if (this.disposed) return
       const ctx = this.ctx
       if (ctx == null || option == null) {
         return
       }
       try {
+        option = normalizeOption(option)
+        this.currentOption = option
         this.grid = { top: 10, right: 20, bottom: 25, left: 50 }
         const optionObject = option as UTSJSONObject
         const backgroundColor = optionObject.get('backgroundColor')
@@ -358,10 +366,10 @@ export default {
       if (ctx == null || activePointer == null || plotGrid == null) {
         return
       }
-      if (!this.shouldShowAxisPointer(this.option)) {
+      if (!this.shouldShowAxisPointer(this.currentOption)) {
         return
       }
-      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const optionObject = (this.currentOption != null ? this.currentOption : {}) as UTSJSONObject
       const tooltipValue = optionObject.get('tooltip')
       const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
       const axisPointerValue = tooltip.get('axisPointer')
@@ -411,7 +419,7 @@ export default {
       if (ctx == null || activePointer == null) {
         return
       }
-      if (!this.shouldShowTooltipContent(this.option)) {
+      if (!this.shouldShowTooltipContent(this.currentOption)) {
         return
       }
       const pointerObject = activePointer as UTSJSONObject
@@ -441,7 +449,7 @@ export default {
       if (boxY + boxHeight > this.canvasHeight - 8) {
         boxY = Math.max(8, this.canvasHeight - boxHeight - 8)
       }
-      const optionObject = (this.option != null ? this.option : {}) as UTSJSONObject
+      const optionObject = (this.currentOption != null ? this.currentOption : {}) as UTSJSONObject
       const tooltipValue = optionObject.get('tooltip')
       const tooltip = (tooltipValue != null ? tooltipValue : {}) as UTSJSONObject
       const backgroundColorValue = tooltip.get('backgroundColor')
@@ -489,9 +497,9 @@ export default {
       touchInfoObject.set('lastY', touchY)
       this.activePointer = pointer
       if (emitTooltip) {
-        this.$emit('tooltipShow', pointer)
+        this.emitChartEvent('tooltipShow', pointer)
       }
-      this.drawChart(this.option)
+      this.drawChart(this.currentOption)
       return pointer
     },
     getTouchPoint(event : any) : UTSJSONObject | null {
@@ -556,23 +564,118 @@ export default {
       const startY = typeof startYValue == 'number' ? startYValue : 0
       const moved = Math.abs(endX - startX) > this.TAP_SLOP || Math.abs(endY - startY) > this.TAP_SLOP
       if (!moved && finalPointer != null) {
-        this.$emit('click', finalPointer)
+        this.emitChartEvent('click', finalPointer)
       }
     },
     setOption(option : any, notMerge : boolean = false) {
-      if (notMerge) {
-        this.drawChart(option)
-        return
-      }
-      try {
-        this.drawChart(option)
-      } catch (error) {
-        console.error('合并配置失败:', error)
-        this.drawChart(option)
-      }
+      if (this.disposed) return false
+      const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
+      this.drawChart(nextOption)
+      return true
     },
     resize() {
+      if (this.disposed) return false
       this.initCanvas()
+      return true
+    },
+    getOption() : any { return this.currentOption },
+    getWidth() : number { return this.canvasWidth },
+    getHeight() : number { return this.canvasHeight },
+    clear() : boolean {
+      this.activePointer = null
+      this.seriesData = [] as any[]
+      if (this.ctx != null) {
+        this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+        this.ctx.$callMethod('draw')
+      }
+      return true
+    },
+    dispose() : boolean {
+      if (this.disposed) return true
+      this.disposed = true
+      this.eventHandlers = {} as UTSJSONObject
+      this.clear()
+      return true
+    },
+    showLoading(textOrOptions : any = 'Loading...') : boolean {
+      if (this.disposed || this.ctx == null) return false
+      this.loading = true
+      const text = typeof textOrOptions == 'string' ? `${textOrOptions}` : 'Loading...'
+      this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.$callMethod('setFillStyle', 'rgba(255,255,255,0.86)')
+      this.ctx.$callMethod('fillRect', 0, 0, this.canvasWidth, this.canvasHeight)
+      this.ctx.$callMethod('setFillStyle', '#64748b')
+      this.ctx.$callMethod('setFontSize', 14)
+      this.ctx.$callMethod('setTextAlign', 'center')
+      this.ctx.$callMethod('setTextBaseline', 'middle')
+      this.ctx.$callMethod('fillText', text, this.canvasWidth / 2, this.canvasHeight / 2)
+      this.ctx.$callMethod('draw')
+      return true
+    },
+    hideLoading() : boolean {
+      if (this.disposed) return false
+      this.loading = false
+      this.drawChart(this.currentOption)
+      return true
+    },
+    on(eventName : string, handler : any) : boolean {
+      if (eventName == '' || handler == null) return false
+      const current = this.eventHandlers.get(eventName)
+      const handlers = Array.isArray(current) ? current as any[] : [] as any[]
+      handlers.push(handler)
+      this.eventHandlers.set(eventName, handlers)
+      return true
+    },
+    off(eventName : string, handler : any | null = null) : boolean {
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return false
+      if (handler == null) {
+        this.eventHandlers.set(eventName, [] as any[])
+        return true
+      }
+      this.eventHandlers.set(eventName, (current as any[]).filter((item : any) => item != handler))
+      return true
+    },
+    emitChartEvent(eventName : string, payload : any) {
+      this.$emit(eventName, payload)
+      const current = this.eventHandlers.get(eventName)
+      if (!Array.isArray(current)) return
+      ;(current as any[]).forEach((handler : any) => {
+        try { handler(payload) } catch (error) { console.error('[ly-charts] event handler failed:', error) }
+      })
+    },
+    updateActivePointerByDataIndex(dataIndex : any, seriesIndex : number = 0) : boolean {
+      const index = typeof dataIndex == 'number' ? dataIndex as number : parseInt(`${dataIndex}`)
+      if (index < 0 || this.seriesData.length == 0) return false
+      const series = this.seriesData[Math.min(seriesIndex, this.seriesData.length - 1)] as UTSJSONObject
+      const pointsValue = series.get('points')
+      const points = Array.isArray(pointsValue) ? pointsValue as any[] : [] as any[]
+      if (index >= points.length) return false
+      const point = points[index] as UTSJSONObject
+      const xValue = point.get('x')
+      const yValue = point.get('y')
+      const x = typeof xValue == 'number' ? xValue : 0
+      const y = typeof yValue == 'number' ? yValue : 0
+      const pointer = this.findNearestScatterPoint(x, y, 999)
+      if (pointer == null) return false
+      this.activePointer = pointer
+      this.emitChartEvent('tooltipShow', pointer)
+      this.drawChart(this.currentOption)
+      return true
+    },
+    dispatchAction(action : any) : boolean {
+      if (this.disposed || action == null) return false
+      const actionObject = action as UTSJSONObject
+      const typeValue = actionObject.get('type')
+      if (`${typeValue}` == 'hideTip') {
+        this.activePointer = null
+        this.drawChart(this.currentOption)
+        return true
+      }
+      if (`${typeValue}` == 'showTip') {
+        return this.updateActivePointerByDataIndex(actionObject.get('dataIndex'), typeof actionObject.get('seriesIndex') == 'number' ? actionObject.get('seriesIndex') as number : 0)
+      }
+      return false
     }
   },
   mounted() {
