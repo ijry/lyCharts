@@ -51,7 +51,12 @@ import {
   mergeOptions,
   applyLegendSelection,
   applyAxisDataWindow,
+  appendSeriesData,
+  clearItemState,
+  hasItemState,
+  setItemState,
   toggleLegendSelected,
+  toggleItemState,
   updateDataZoomOption,
   formatTooltipLines
 } from '../../libs/uvue/runtimeHelper.uts'
@@ -87,6 +92,8 @@ export default {
       currentOption: {} as any,
       disposed: false,
       loading: false,
+      highlightState: {} as UTSJSONObject,
+      selectState: {} as UTSJSONObject,
       eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
@@ -337,16 +344,21 @@ export default {
 
         if (serieObject.get('showSymbol') != false) {
           ctx.$callMethod('setFillStyle', color)
-          points.forEach((point : any) => {
+          points.forEach((point : any, dataIndex : number) => {
             const pointObject = point as UTSJSONObject
             const x = pointObject.get('x') as number
             const y = pointObject.get('y') as number
+            const selected = hasItemState(this.selectState, index, dataIndex)
+            const highlighted = hasItemState(this.highlightState, index, dataIndex)
+            const radius = selected ? 7 : (highlighted ? 6 : 4)
+            const innerRadius = selected ? 4 : (highlighted ? 3 : 2)
             ctx.$callMethod('beginPath')
-            ctx.$callMethod('arc', x, y, 4, 0, 2 * Math.PI, false)
+            ctx.$callMethod('setFillStyle', selected ? '#ffffff' : color)
+            ctx.$callMethod('arc', x, y, radius, 0, 2 * Math.PI, false)
             ctx.$callMethod('fill')
             ctx.$callMethod('beginPath')
-            ctx.$callMethod('setFillStyle', '#ffffff')
-            ctx.$callMethod('arc', x, y, 2, 0, 2 * Math.PI, false)
+            ctx.$callMethod('setFillStyle', selected ? color : '#ffffff')
+            ctx.$callMethod('arc', x, y, innerRadius, 0, 2 * Math.PI, false)
             ctx.$callMethod('fill')
             ctx.$callMethod('setFillStyle', color)
           })
@@ -847,8 +859,19 @@ export default {
     },
     setOption(option : any, notMerge : boolean = false) {
       if (this.disposed) return false
+      if (notMerge === true) {
+        this.highlightState = {} as UTSJSONObject
+        this.selectState = {} as UTSJSONObject
+      }
       const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
       this.drawChart(nextOption)
+      return true
+    },
+    appendData(payload : any) : boolean {
+      if (this.disposed) return false
+      const result = appendSeriesData(this.currentOption != null ? this.currentOption : this.option, payload)
+      if (result.get('changed') !== true) return false
+      this.drawChart(result.get('option'))
       return true
     },
     resize() {
@@ -869,6 +892,8 @@ export default {
       this.activePointer = null
       this.seriesData = [] as any[]
       this.categoryCenters = [] as number[]
+      this.highlightState = {} as UTSJSONObject
+      this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
         this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
         this.ctx.$callMethod('draw')
@@ -956,6 +981,31 @@ export default {
       this.drawChart(this.currentOption)
       return true
     },
+    applyItemAction(action : any) : boolean {
+      const actionObject = action as UTSJSONObject
+      const typeValue = actionObject.get('type')
+      const seriesIndex = actionObject.get('seriesIndex') != null ? actionObject.get('seriesIndex') : 0
+      const dataIndex = actionObject.get('dataIndex')
+      if (`${typeValue}` == 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'downplay') {
+        clearItemState(this.highlightState, actionObject.get('seriesIndex'), actionObject.get('dataIndex'))
+      } else if (`${typeValue}` == 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'unselect') {
+        if (dataIndex == null) {
+          clearItemState(this.selectState)
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false
+        }
+      } else if (`${typeValue}` == 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false
+      } else {
+        return false
+      }
+      this.drawChart(this.currentOption)
+      return true
+    },
     dispatchAction(action : any) : boolean {
       if (this.disposed || action == null) return false
       const actionObject = action as UTSJSONObject
@@ -981,6 +1031,9 @@ export default {
         this.activePointer = null
         this.drawChart(result.get('option'))
         return true
+      }
+      if (`${typeValue}` == 'highlight' || `${typeValue}` == 'downplay' || `${typeValue}` == 'select' || `${typeValue}` == 'unselect' || `${typeValue}` == 'toggleSelect') {
+        return this.applyItemAction(action)
       }
       return false
     }

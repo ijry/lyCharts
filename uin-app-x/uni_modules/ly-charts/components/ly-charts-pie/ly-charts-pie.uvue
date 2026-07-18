@@ -17,7 +17,14 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
-import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
+import {
+  normalizeOption,
+  mergeOptions,
+  clearItemState,
+  hasItemState,
+  setItemState,
+  toggleItemState
+} from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-pie',
@@ -48,6 +55,8 @@ export default {
       currentOption: {} as any,
       disposed: false,
       loading: false,
+      highlightState: {} as UTSJSONObject,
+      selectState: {} as UTSJSONObject,
       eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
@@ -253,6 +262,8 @@ export default {
             } else if (directColor != null && `${directColor}` !== '') {
               color = `${directColor}`
             }
+            const selected = hasItemState(this.selectState, 0, index)
+            const highlighted = hasItemState(this.highlightState, 0, index)
 
             ctx.$callMethod('beginPath')
             if (innerRadiusPx > 0) {
@@ -265,6 +276,21 @@ export default {
             }
             ctx.$callMethod('setFillStyle', color)
             ctx.$callMethod('fill')
+
+            if (selected || highlighted) {
+              ctx.$callMethod('beginPath')
+              if (innerRadiusPx > 0) {
+                ctx.$callMethod('arc', centerX, centerY, outerRadiusPx + (selected ? 4 : 2), startAngle, endAngle, false)
+                ctx.$callMethod('arc', centerX, centerY, innerRadiusPx, endAngle, startAngle, true)
+              } else {
+                ctx.$callMethod('moveTo', centerX, centerY)
+                ctx.$callMethod('arc', centerX, centerY, outerRadiusPx + (selected ? 4 : 2), startAngle, endAngle, false)
+                ctx.$callMethod('closePath')
+              }
+              ctx.$callMethod('setStrokeStyle', selected ? '#0f172a' : '#ffffff')
+              ctx.$callMethod('setLineWidth', selected ? 4 : 2)
+              ctx.$callMethod('stroke')
+            }
 
             const midAngle = startAngle + sliceAngle / 2
             const labelX = centerX + Math.cos(midAngle) * (outerRadiusPx + 16)
@@ -636,6 +662,10 @@ export default {
     },
     setOption(option : any, notMerge : boolean = false) : boolean {
       if (this.disposed) return false
+      if (notMerge === true) {
+        this.highlightState = {} as UTSJSONObject
+        this.selectState = {} as UTSJSONObject
+      }
       const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
       this.drawChart(nextOption)
       return true
@@ -652,6 +682,8 @@ export default {
       this.activePointer = null
       this.sectorData = [] as any[]
       this.pieMeta = null
+      this.highlightState = {} as UTSJSONObject
+      this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
         this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
         this.ctx.$callMethod('draw')
@@ -729,6 +761,31 @@ export default {
       this.drawChart(this.currentOption)
       return true
     },
+    applyItemAction(action : any) : boolean {
+      const actionObject = action as UTSJSONObject
+      const typeValue = actionObject.get('type')
+      const seriesIndex = actionObject.get('seriesIndex') != null ? actionObject.get('seriesIndex') : 0
+      const dataIndex = actionObject.get('dataIndex')
+      if (`${typeValue}` == 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'downplay') {
+        clearItemState(this.highlightState, actionObject.get('seriesIndex'), actionObject.get('dataIndex'))
+      } else if (`${typeValue}` == 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'unselect') {
+        if (dataIndex == null) {
+          clearItemState(this.selectState)
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false
+        }
+      } else if (`${typeValue}` == 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false
+      } else {
+        return false
+      }
+      this.drawChart(this.currentOption)
+      return true
+    },
     dispatchAction(action : any) : boolean {
       if (this.disposed || action == null) return false
       const actionObject = action as UTSJSONObject
@@ -740,6 +797,9 @@ export default {
       }
       if (`${typeValue}` == 'showTip') {
         return this.updateActivePointerByDataIndex(actionObject.get('dataIndex'))
+      }
+      if (`${typeValue}` == 'highlight' || `${typeValue}` == 'downplay' || `${typeValue}` == 'select' || `${typeValue}` == 'unselect' || `${typeValue}` == 'toggleSelect') {
+        return this.applyItemAction(action)
       }
       return false
     }

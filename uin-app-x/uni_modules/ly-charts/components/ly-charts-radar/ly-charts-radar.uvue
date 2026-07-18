@@ -17,7 +17,14 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
-import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
+import {
+  normalizeOption,
+  mergeOptions,
+  clearItemState,
+  hasItemState,
+  setItemState,
+  toggleItemState
+} from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-radar',
@@ -48,6 +55,8 @@ export default {
       currentOption: {} as any,
       disposed: false,
       loading: false,
+      highlightState: {} as UTSJSONObject,
+      selectState: {} as UTSJSONObject,
       eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
@@ -301,11 +310,26 @@ export default {
         ctx.$callMethod('setLineWidth', 2)
         ctx.$callMethod('stroke')
         ctx.$callMethod('setFillStyle', color)
-        points.forEach((point : any) => {
+        points.forEach((point : any, dataIndex : number) => {
           const pointObject = point as UTSJSONObject
+          const selected = hasItemState(this.selectState, seriesIndex, dataIndex)
+          const highlighted = hasItemState(this.highlightState, seriesIndex, dataIndex)
+          const pointRadius = selected ? 6 : (highlighted ? 5 : 3)
+          if (selected || highlighted) {
+            ctx.$callMethod('beginPath')
+            ctx.$callMethod('setFillStyle', '#ffffff')
+            ctx.$callMethod('arc', pointObject.get('x') as number, pointObject.get('y') as number, pointRadius + 2, 0, 2 * Math.PI, false)
+            ctx.$callMethod('fill')
+          }
           ctx.$callMethod('beginPath')
-          ctx.$callMethod('arc', pointObject.get('x') as number, pointObject.get('y') as number, 3, 0, 2 * Math.PI, false)
+          ctx.$callMethod('setFillStyle', color)
+          ctx.$callMethod('arc', pointObject.get('x') as number, pointObject.get('y') as number, pointRadius, 0, 2 * Math.PI, false)
           ctx.$callMethod('fill')
+          if (selected) {
+            ctx.$callMethod('setStrokeStyle', '#0f172a')
+            ctx.$callMethod('setLineWidth', 2)
+            ctx.$callMethod('stroke')
+          }
         })
         this.seriesPoints.push({
           seriesIndex: seriesIndex,
@@ -679,6 +703,10 @@ export default {
     },
     setOption(option : any, notMerge : boolean = false) : boolean {
       if (this.disposed) return false
+      if (notMerge === true) {
+        this.highlightState = {} as UTSJSONObject
+        this.selectState = {} as UTSJSONObject
+      }
       const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
       this.drawChart(nextOption)
       return true
@@ -695,6 +723,8 @@ export default {
       this.activePointer = null
       this.seriesPoints = [] as any[]
       this.radarMeta = null
+      this.highlightState = {} as UTSJSONObject
+      this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
         this.ctx.$callMethod('clearRect', 0, 0, this.canvasWidth, this.canvasHeight)
         this.ctx.$callMethod('draw')
@@ -774,6 +804,31 @@ export default {
       this.drawChart(this.currentOption)
       return true
     },
+    applyItemAction(action : any) : boolean {
+      const actionObject = action as UTSJSONObject
+      const typeValue = actionObject.get('type')
+      const seriesIndex = actionObject.get('seriesIndex') != null ? actionObject.get('seriesIndex') : 0
+      const dataIndex = actionObject.get('dataIndex')
+      if (`${typeValue}` == 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'downplay') {
+        clearItemState(this.highlightState, actionObject.get('seriesIndex'), actionObject.get('dataIndex'))
+      } else if (`${typeValue}` == 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'unselect') {
+        if (dataIndex == null) {
+          clearItemState(this.selectState)
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false
+        }
+      } else if (`${typeValue}` == 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false
+      } else {
+        return false
+      }
+      this.drawChart(this.currentOption)
+      return true
+    },
     dispatchAction(action : any) : boolean {
       if (this.disposed || action == null) return false
       const actionObject = action as UTSJSONObject
@@ -785,6 +840,9 @@ export default {
       }
       if (`${typeValue}` == 'showTip') {
         return this.updateActivePointerByDataIndex(actionObject.get('dataIndex'), typeof actionObject.get('seriesIndex') == 'number' ? actionObject.get('seriesIndex') as number : 0)
+      }
+      if (`${typeValue}` == 'highlight' || `${typeValue}` == 'downplay' || `${typeValue}` == 'select' || `${typeValue}` == 'unselect' || `${typeValue}` == 'toggleSelect') {
+        return this.applyItemAction(action)
       }
       return false
     }
