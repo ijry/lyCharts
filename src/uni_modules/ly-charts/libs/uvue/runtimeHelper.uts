@@ -424,3 +424,87 @@ export function formatTooltipLines(option : any, pointer : any, defaultLines : a
 
   return output.length > 0 ? output : defaultLines
 }
+
+export function makeItemKey(seriesIndex : any, dataIndex : any) : string | null {
+  const series = seriesIndex == null ? 0 : Number(seriesIndex)
+  const data = Number(dataIndex)
+  if (!isFinite(series) || !isFinite(data)) return null
+  const seriesInt = Math.floor(series)
+  const dataInt = Math.floor(data)
+  if (seriesInt < 0 || dataInt < 0 || seriesInt != series || dataInt != data) return null
+  return `${seriesInt}:${dataInt}`
+}
+
+export function setItemState(state : UTSJSONObject, seriesIndex : any, dataIndex : any, enabled : boolean = true) : boolean {
+  const key = makeItemKey(seriesIndex, dataIndex)
+  if (key == null) return false
+  state.set(key, enabled === true)
+  return true
+}
+
+export function toggleItemState(state : UTSJSONObject, seriesIndex : any, dataIndex : any) : boolean {
+  const key = makeItemKey(seriesIndex, dataIndex)
+  if (key == null) return false
+  state.set(key, state.get(key) !== true)
+  return true
+}
+
+export function clearItemState(state : UTSJSONObject, seriesIndex : any | null = null, dataIndex : any | null = null) : boolean {
+  const key = makeItemKey(seriesIndex, dataIndex)
+  if (key != null) {
+    state.set(key, false)
+    return true
+  }
+  Object.keys(state).forEach((itemKey : string) => {
+    state.set(itemKey, false)
+  })
+  return true
+}
+
+export function hasItemState(state : UTSJSONObject, seriesIndex : any, dataIndex : any) : boolean {
+  const key = makeItemKey(seriesIndex, dataIndex)
+  return key != null && state.get(key) === true
+}
+
+export function appendSeriesData(option : any, payload : any) : UTSJSONObject {
+  const result = {} as UTSJSONObject
+  const payloadObject = (payload != null ? payload : {}) as UTSJSONObject
+  const seriesIndexValue = payloadObject.get('seriesIndex')
+  const seriesIndex = seriesIndexValue == null ? 0 : Number(seriesIndexValue)
+  const incomingValue = payloadObject.get('data')
+  if (!isFinite(seriesIndex) || Math.floor(seriesIndex) != seriesIndex || seriesIndex < 0 || incomingValue == null) {
+    result.set('option', option)
+    result.set('changed', false)
+    return result
+  }
+
+  const nextOption = cloneRuntimeValue(option)
+  const optionObject = nextOption as UTSJSONObject
+  const seriesValue = optionObject.get('series')
+  if (!Array.isArray(seriesValue) || seriesIndex >= (seriesValue as any[]).length) {
+    result.set('option', option)
+    result.set('changed', false)
+    return result
+  }
+
+  const nextSeries = (seriesValue as any[]).slice(0)
+  const seriesItem = cloneRuntimeValue(nextSeries[seriesIndex]) as UTSJSONObject
+  const currentDataValue = seriesItem.get('data')
+  const currentData = Array.isArray(currentDataValue) ? (currentDataValue as any[]).slice(0) : [] as any[]
+  const incoming = Array.isArray(incomingValue) ? incomingValue as any[] : [incomingValue]
+  if (incoming.length == 0) {
+    result.set('option', option)
+    result.set('changed', false)
+    return result
+  }
+
+  incoming.forEach((item : any) => {
+    currentData.push(item)
+  })
+  seriesItem.set('data', currentData)
+  nextSeries[seriesIndex] = seriesItem
+  optionObject.set('series', nextSeries)
+  result.set('option', nextOption)
+  result.set('changed', true)
+  return result
+}

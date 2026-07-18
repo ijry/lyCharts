@@ -317,3 +317,69 @@ export function formatTooltipLines(option, pointer, defaultLines, chartType, all
 
   return defaultLines;
 }
+
+export function makeItemKey(seriesIndex, dataIndex) {
+  const series = Number(seriesIndex ?? 0);
+  const data = Number(dataIndex);
+  if (!Number.isInteger(series) || !Number.isInteger(data) || series < 0 || data < 0) return null;
+  return `${series}:${data}`;
+}
+
+export function setItemState(state, seriesIndex, dataIndex, enabled = true) {
+  const key = makeItemKey(seriesIndex, dataIndex);
+  if (!key || !state) return false;
+  if (enabled) {
+    state[key] = true;
+  } else {
+    delete state[key];
+  }
+  return true;
+}
+
+export function toggleItemState(state, seriesIndex, dataIndex) {
+  const key = makeItemKey(seriesIndex, dataIndex);
+  if (!key || !state) return false;
+  if (state[key]) {
+    delete state[key];
+  } else {
+    state[key] = true;
+  }
+  return true;
+}
+
+export function clearItemState(state, seriesIndex, dataIndex) {
+  if (!state) return false;
+  const key = makeItemKey(seriesIndex, dataIndex);
+  if (key) {
+    delete state[key];
+    return true;
+  }
+  Object.keys(state).forEach(itemKey => delete state[itemKey]);
+  return true;
+}
+
+export function hasItemState(state, seriesIndex, dataIndex) {
+  const key = makeItemKey(seriesIndex, dataIndex);
+  return !!(key && state && state[key]);
+}
+
+export function appendSeriesData(option, payload = {}) {
+  const seriesIndex = Number(payload.seriesIndex ?? 0);
+  if (!Number.isInteger(seriesIndex) || seriesIndex < 0) return { option, changed: false };
+  if (!Object.prototype.hasOwnProperty.call(payload, 'data')) return { option, changed: false };
+
+  const nextOption = clone(option || {});
+  if (!Array.isArray(nextOption.series) || !nextOption.series[seriesIndex]) {
+    return { option, changed: false };
+  }
+
+  const incoming = Array.isArray(payload.data) ? payload.data : [payload.data];
+  if (incoming.length === 0) return { option, changed: false };
+
+  const seriesItem = { ...nextOption.series[seriesIndex] };
+  const currentData = Array.isArray(seriesItem.data) ? seriesItem.data.slice() : [];
+  seriesItem.data = currentData.concat(incoming);
+  nextOption.series = nextOption.series.slice();
+  nextOption.series[seriesIndex] = seriesItem;
+  return { option: nextOption, changed: true };
+}
