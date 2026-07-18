@@ -1,3 +1,10 @@
+## 26.2.4
+feat: 增强 ECharts 运行时 API 兼容能力
+
+- line/bar/scatter 支持 legend.selected 和 legendToggleSelect
+- line/bar/scatter 支持 dataZoom 数据窗口裁剪
+- tooltip.formatter 支持基础字符串模板，Vue 端支持函数 formatter，uvue 端安全降级
+
 ## 26.2.3
 feat: add ECharts runtime API compatibility
 
