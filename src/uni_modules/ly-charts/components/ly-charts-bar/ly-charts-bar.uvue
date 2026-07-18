@@ -22,7 +22,12 @@ import {
   mergeOptions,
   applyLegendSelection,
   applyAxisDataWindow,
+  appendSeriesData,
+  clearItemState,
+  hasItemState,
+  setItemState,
   toggleLegendSelected,
+  toggleItemState,
   updateDataZoomOption,
   formatTooltipLines
 } from '../../libs/uvue/runtimeHelper.uts'
@@ -58,6 +63,8 @@ export default {
       currentOption: {} as any,
       disposed: false,
       loading: false,
+      highlightState: {} as UTSJSONObject,
+      selectState: {} as UTSJSONObject,
       eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
@@ -289,6 +296,11 @@ export default {
           const endY = this.grid.top + chartHeight - ((endValue - actualMinY) / (actualMaxY - actualMinY || 1)) * chartHeight
           const topY = Math.min(startY, endY)
           const height = Math.abs(endY - startY)
+          const drawHeight = Math.max(height, 1)
+          const selected = hasItemState(this.selectState, seriesIndex, i)
+          const highlighted = hasItemState(this.highlightState, seriesIndex, i)
+          const emphasisColor = selected ? '#0f172a' : '#ffffff'
+          const emphasisWidth = selected ? 3 : 2
 
           this.ctx.beginPath()
           this.ctx.setFillStyle(color)
@@ -298,15 +310,30 @@ export default {
             this.ctx.lineTo(x + barWidth, topY + height)
             this.ctx.closePath()
             this.ctx.fill()
+            if (selected || highlighted) {
+              this.ctx.beginPath()
+              this.ctx.moveTo(x + barWidth / 2, topY)
+              this.ctx.lineTo(x, topY + height)
+              this.ctx.lineTo(x + barWidth, topY + height)
+              this.ctx.closePath()
+              this.ctx.setStrokeStyle(emphasisColor)
+              this.ctx.setLineWidth(emphasisWidth)
+              this.ctx.stroke()
+            }
           } else {
-            this.ctx.fillRect(x, topY, barWidth, Math.max(height, 1))
+            this.ctx.fillRect(x, topY, barWidth, drawHeight)
+            if (selected || highlighted) {
+              this.ctx.setStrokeStyle(emphasisColor)
+              this.ctx.setLineWidth(emphasisWidth)
+              this.ctx.strokeRect(x, topY, barWidth, drawHeight)
+            }
           }
 
           const point = {
             x,
             y: topY,
             width: barWidth,
-            height: Math.max(height, 1),
+            height: drawHeight,
             value: safeValue,
             name: xAxisData[i] || i,
             seriesName: serie.name || `Series ${seriesIndex}`,
@@ -594,8 +621,19 @@ export default {
     },
     setOption(option : any, notMerge : boolean = false) {
       if (this.disposed) return false
+      if (notMerge === true) {
+        this.highlightState = {} as UTSJSONObject
+        this.selectState = {} as UTSJSONObject
+      }
       const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
       this.drawChart(nextOption)
+      return true
+    },
+    appendData(payload : any) : boolean {
+      if (this.disposed) return false
+      const result = appendSeriesData(this.currentOption != null ? this.currentOption : this.option, payload)
+      if (result.get('changed') !== true) return false
+      this.drawChart(result.get('option'))
       return true
     },
     resize() {
@@ -616,6 +654,8 @@ export default {
       this.activePointer = null
       this.seriesData = [] as any[]
       this.categoryCenters = [] as number[]
+      this.highlightState = {} as UTSJSONObject
+      this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
         this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
         this.ctx.draw()
@@ -701,6 +741,30 @@ export default {
       this.drawChart(this.currentOption)
       return true
     },
+    applyItemAction(action : any) : boolean {
+      const typeValue = action.type
+      const seriesIndex = action.seriesIndex != null ? action.seriesIndex : 0
+      const dataIndex = action.dataIndex
+      if (`${typeValue}` == 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'downplay') {
+        clearItemState(this.highlightState, action.seriesIndex, action.dataIndex)
+      } else if (`${typeValue}` == 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'unselect') {
+        if (dataIndex == null) {
+          clearItemState(this.selectState)
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false
+        }
+      } else if (`${typeValue}` == 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false
+      } else {
+        return false
+      }
+      this.drawChart(this.currentOption)
+      return true
+    },
     dispatchAction(action : any) : boolean {
       if (this.disposed || action == null) return false
       const typeValue = action.type
@@ -725,6 +789,9 @@ export default {
         this.activePointer = null
         this.drawChart(result.get('option'))
         return true
+      }
+      if (`${typeValue}` == 'highlight' || `${typeValue}` == 'downplay' || `${typeValue}` == 'select' || `${typeValue}` == 'unselect' || `${typeValue}` == 'toggleSelect') {
+        return this.applyItemAction(action)
       }
       return false
     }

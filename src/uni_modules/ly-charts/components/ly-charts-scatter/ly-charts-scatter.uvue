@@ -22,7 +22,12 @@ import {
   mergeOptions,
   applyLegendSelection,
   applyAxisDataWindow,
+  appendSeriesData,
+  clearItemState,
+  hasItemState,
+  setItemState,
   toggleLegendSelected,
+  toggleItemState,
   updateDataZoomOption,
   formatTooltipLines
 } from '../../libs/uvue/runtimeHelper.uts'
@@ -57,6 +62,8 @@ export default {
       currentOption: {} as any,
       disposed: false,
       loading: false,
+      highlightState: {} as UTSJSONObject,
+      selectState: {} as UTSJSONObject,
       eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
@@ -255,8 +262,16 @@ export default {
         })
         if (points.length > 0) {
           this.ctx.setFillStyle(color)
-          points.forEach((point : any) => {
-            this.drawSymbol(point.x, point.y, symbolSize, serie.symbol || 'circle')
+          points.forEach((point : any, pointIndex : number) => {
+            const selected = hasItemState(this.selectState, index, pointIndex)
+            const highlighted = hasItemState(this.highlightState, index, pointIndex)
+            const size = selected ? symbolSize + 6 : (highlighted ? symbolSize + 4 : symbolSize)
+            this.ctx.setFillStyle(selected ? '#0f172a' : color)
+            this.drawSymbol(point.x, point.y, size, serie.symbol || 'circle')
+            if (selected || highlighted) {
+              this.ctx.setFillStyle(color)
+              this.drawSymbol(point.x, point.y, Math.max(symbolSize, size - 4), serie.symbol || 'circle')
+            }
           })
         }
       })
@@ -463,8 +478,19 @@ export default {
     },
     setOption(option : any, notMerge : boolean = false) {
       if (this.disposed) return false
+      if (notMerge === true) {
+        this.highlightState = {} as UTSJSONObject
+        this.selectState = {} as UTSJSONObject
+      }
       const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
       this.drawChart(nextOption)
+      return true
+    },
+    appendData(payload : any) : boolean {
+      if (this.disposed) return false
+      const result = appendSeriesData(this.currentOption != null ? this.currentOption : this.option, payload)
+      if (result.get('changed') !== true) return false
+      this.drawChart(result.get('option'))
       return true
     },
     resize() {
@@ -484,6 +510,8 @@ export default {
     clear() : boolean {
       this.activePointer = null
       this.seriesData = [] as any[]
+      this.highlightState = {} as UTSJSONObject
+      this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
         this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
         this.ctx.draw()
@@ -562,6 +590,30 @@ export default {
       this.drawChart(this.currentOption)
       return true
     },
+    applyItemAction(action : any) : boolean {
+      const typeValue = action.type
+      const seriesIndex = action.seriesIndex != null ? action.seriesIndex : 0
+      const dataIndex = action.dataIndex
+      if (`${typeValue}` == 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'downplay') {
+        clearItemState(this.highlightState, action.seriesIndex, action.dataIndex)
+      } else if (`${typeValue}` == 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'unselect') {
+        if (dataIndex == null) {
+          clearItemState(this.selectState)
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false
+        }
+      } else if (`${typeValue}` == 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false
+      } else {
+        return false
+      }
+      this.drawChart(this.currentOption)
+      return true
+    },
     dispatchAction(action : any) : boolean {
       if (this.disposed || action == null) return false
       const typeValue = action.type
@@ -586,6 +638,9 @@ export default {
         this.activePointer = null
         this.drawChart(result.get('option'))
         return true
+      }
+      if (`${typeValue}` == 'highlight' || `${typeValue}` == 'downplay' || `${typeValue}` == 'select' || `${typeValue}` == 'unselect' || `${typeValue}` == 'toggleSelect') {
+        return this.applyItemAction(action)
       }
       return false
     }
