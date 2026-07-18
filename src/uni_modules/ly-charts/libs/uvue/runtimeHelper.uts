@@ -122,3 +122,305 @@ function readRowValue(row : any, dimensions : string[], key : any) : any {
   const rowObject = row as UTSJSONObject
   return rowObject.get(`${key}`)
 }
+
+function cloneRuntimeValue(value : any) : any {
+  if (value == null) return {}
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch (error) {
+    return value
+  }
+}
+
+export function getSeriesName(seriesItem : any, index : number = 0) : string {
+  const seriesObject = seriesItem as UTSJSONObject
+  const nameValue = seriesObject.get('name')
+  return nameValue != null ? `${nameValue}` : `Series ${index}`
+}
+
+export function applyLegendSelection(option : any) : any {
+  const nextOption = cloneRuntimeValue(option)
+  const optionObject = nextOption as UTSJSONObject
+  const legendValue = optionObject.get('legend')
+  if (legendValue == null) return nextOption
+
+  const legend = legendValue as UTSJSONObject
+  const selectedValue = legend.get('selected')
+  if (selectedValue == null) return nextOption
+
+  const selected = selectedValue as UTSJSONObject
+  const seriesValue = optionObject.get('series')
+  if (!Array.isArray(seriesValue)) return nextOption
+
+  const visibleSeries = [] as any[]
+  ;(seriesValue as any[]).forEach((serie : any, index : number) => {
+    const name = getSeriesName(serie, index)
+    if (selected.get(name) !== false) {
+      visibleSeries.push(serie)
+    }
+  })
+  optionObject.set('series', visibleSeries)
+  return nextOption
+}
+
+function getRuntimeDataLength(option : any) : number {
+  const optionObject = option as UTSJSONObject
+  let dataLength = 0
+  const xAxisValue = optionObject.get('xAxis')
+  if (xAxisValue != null) {
+    const xAxis = xAxisValue as UTSJSONObject
+    const dataValue = xAxis.get('data')
+    if (Array.isArray(dataValue)) {
+      dataLength = Math.max(dataLength, (dataValue as any[]).length)
+    }
+  }
+
+  const seriesValue = optionObject.get('series')
+  if (Array.isArray(seriesValue)) {
+    ;(seriesValue as any[]).forEach((serie : any) => {
+      const serieObject = serie as UTSJSONObject
+      const dataValue = serieObject.get('data')
+      if (Array.isArray(dataValue)) {
+        dataLength = Math.max(dataLength, (dataValue as any[]).length)
+      }
+    })
+  }
+  return dataLength
+}
+
+export function resolveDataZoomWindow(option : any, dataLength : number) : UTSJSONObject {
+  const result = {} as UTSJSONObject
+  const length = dataLength
+  if (length <= 0) {
+    result.set('startIndex', 0)
+    result.set('endIndex', -1)
+    result.set('changed', false)
+    return result
+  }
+
+  const optionObject = option as UTSJSONObject
+  const dataZoomValue = optionObject.get('dataZoom')
+  let zoom = null as UTSJSONObject | null
+  if (Array.isArray(dataZoomValue)) {
+    const zoomList = dataZoomValue as any[]
+    for (let i = 0; i < zoomList.length; i++) {
+      const item = zoomList[i] as UTSJSONObject
+      if (item.get('start') != null || item.get('end') != null || item.get('startValue') != null || item.get('endValue') != null) {
+        zoom = item
+        break
+      }
+    }
+  } else if (dataZoomValue != null) {
+    zoom = dataZoomValue as UTSJSONObject
+  }
+
+  if (zoom == null) {
+    result.set('startIndex', 0)
+    result.set('endIndex', length - 1)
+    result.set('changed', false)
+    return result
+  }
+
+  const startValue = zoom.get('startValue')
+  const endValue = zoom.get('endValue')
+  const startPercent = zoom.get('start')
+  const endPercent = zoom.get('end')
+  let startIndex = startValue != null ? Number(startValue) : Math.floor((Number(startPercent != null ? startPercent : 0) / 100) * (length - 1))
+  let endIndex = endValue != null ? Number(endValue) : Math.ceil((Number(endPercent != null ? endPercent : 100) / 100) * (length - 1))
+
+  if (!isFinite(startIndex)) startIndex = 0
+  if (!isFinite(endIndex)) endIndex = length - 1
+
+  startIndex = Math.max(0, Math.min(length - 1, Math.floor(startIndex)))
+  endIndex = Math.max(0, Math.min(length - 1, Math.ceil(endIndex)))
+  if (endIndex < startIndex) {
+    const swap = startIndex
+    startIndex = endIndex
+    endIndex = swap
+  }
+
+  result.set('startIndex', startIndex)
+  result.set('endIndex', endIndex)
+  result.set('changed', startIndex > 0 || endIndex < length - 1)
+  return result
+}
+
+export function applyAxisDataWindow(option : any) : UTSJSONObject {
+  const nextOption = cloneRuntimeValue(option)
+  const optionObject = nextOption as UTSJSONObject
+  const window = resolveDataZoomWindow(nextOption, getRuntimeDataLength(nextOption))
+  const startIndex = window.get('startIndex') as number
+  const endIndex = window.get('endIndex') as number
+  const changed = window.get('changed') as boolean
+
+  if (changed === true) {
+    const end = endIndex + 1
+    const xAxisValue = optionObject.get('xAxis')
+    if (xAxisValue != null) {
+      const xAxis = xAxisValue as UTSJSONObject
+      const dataValue = xAxis.get('data')
+      if (Array.isArray(dataValue)) {
+        xAxis.set('data', (dataValue as any[]).slice(startIndex, end))
+        optionObject.set('xAxis', xAxis)
+      }
+    }
+
+    const seriesValue = optionObject.get('series')
+    if (Array.isArray(seriesValue)) {
+      const nextSeries = [] as any[]
+      ;(seriesValue as any[]).forEach((serie : any) => {
+        const serieObject = cloneRuntimeValue(serie) as UTSJSONObject
+        const dataValue = serieObject.get('data')
+        if (Array.isArray(dataValue)) {
+          serieObject.set('data', (dataValue as any[]).slice(startIndex, end))
+        }
+        nextSeries.push(serieObject)
+      })
+      optionObject.set('series', nextSeries)
+    }
+  }
+
+  const result = {} as UTSJSONObject
+  result.set('option', nextOption)
+  result.set('startIndex', startIndex)
+  result.set('endIndex', endIndex)
+  result.set('changed', changed)
+  return result
+}
+
+export function toggleLegendSelected(option : any, name : any) : UTSJSONObject {
+  const result = {} as UTSJSONObject
+  if (name == null || `${name}` == '') {
+    result.set('option', option)
+    result.set('changed', false)
+    return result
+  }
+
+  const nextOption = cloneRuntimeValue(option)
+  const optionObject = nextOption as UTSJSONObject
+  const seriesValue = optionObject.get('series')
+  let exists = false
+  if (Array.isArray(seriesValue)) {
+    ;(seriesValue as any[]).forEach((serie : any, index : number) => {
+      if (getSeriesName(serie, index) == `${name}`) exists = true
+    })
+  }
+  if (!exists) {
+    result.set('option', option)
+    result.set('changed', false)
+    return result
+  }
+
+  const legendValue = optionObject.get('legend')
+  const legend = legendValue != null ? cloneRuntimeValue(legendValue) as UTSJSONObject : {} as UTSJSONObject
+  const selectedValue = legend.get('selected')
+  const selected = selectedValue != null ? cloneRuntimeValue(selectedValue) as UTSJSONObject : {} as UTSJSONObject
+  selected.set(`${name}`, selected.get(`${name}`) === false)
+  legend.set('selected', selected)
+  optionObject.set('legend', legend)
+
+  result.set('option', nextOption)
+  result.set('changed', true)
+  return result
+}
+
+export function updateDataZoomOption(option : any, action : any) : UTSJSONObject {
+  const result = {} as UTSJSONObject
+  const nextOption = cloneRuntimeValue(option)
+  const optionObject = nextOption as UTSJSONObject
+  const actionObject = action as UTSJSONObject
+  const dataZoomValue = optionObject.get('dataZoom')
+  const zoomList = Array.isArray(dataZoomValue) ? (dataZoomValue as any[]).slice(0) : [] as any[]
+  const target = zoomList.length > 0 ? cloneRuntimeValue(zoomList[0]) as UTSJSONObject : {} as UTSJSONObject
+  let hasWindow = false
+
+  ;(['start', 'end', 'startValue', 'endValue'] as string[]).forEach((key : string) => {
+    const value = actionObject.get(key)
+    if (value != null) {
+      target.set(key, value)
+      hasWindow = true
+    }
+  })
+
+  if (!hasWindow) {
+    result.set('option', option)
+    result.set('changed', false)
+    return result
+  }
+
+  if (zoomList.length == 0) {
+    zoomList.push(target)
+  } else {
+    zoomList[0] = target
+  }
+  optionObject.set('dataZoom', zoomList)
+
+  result.set('option', nextOption)
+  result.set('changed', true)
+  return result
+}
+
+function replaceAllText(text : string, token : string, value : string) : string {
+  let result = text
+  while (result.indexOf(token) >= 0) {
+    result = result.replace(token, value)
+  }
+  return result
+}
+
+function applyTooltipTemplate(template : string, seriesName : any, name : any, value : any) : string {
+  const valueText = Array.isArray(value) ? (value as any[]).join(', ') : `${value != null ? value : ''}`
+  let text = template
+  text = replaceAllText(text, '{a}', `${seriesName != null ? seriesName : ''}`)
+  text = replaceAllText(text, '{seriesName}', `${seriesName != null ? seriesName : ''}`)
+  text = replaceAllText(text, '{b}', `${name != null ? name : ''}`)
+  text = replaceAllText(text, '{name}', `${name != null ? name : ''}`)
+  text = replaceAllText(text, '{c}', valueText)
+  text = replaceAllText(text, '{value}', valueText)
+  text = replaceAllText(text, '{d}', '')
+  return text
+}
+
+function pushTooltipTextLines(lines : any[], text : string, color : any) {
+  const parts = text.split('\n')
+  parts.forEach((line : string) => {
+    lines.push({
+      text: line,
+      color: color || '#e2e8f0',
+      fontSize: 11
+    })
+  })
+}
+
+export function formatTooltipLines(option : any, pointer : any, defaultLines : any[], chartType : string) : any[] {
+  const optionObject = option as UTSJSONObject
+  const tooltipValue = optionObject.get('tooltip')
+  if (tooltipValue == null) return defaultLines
+
+  const tooltip = tooltipValue as UTSJSONObject
+  const formatter = tooltip.get('formatter')
+  if (typeof formatter != 'string') return defaultLines
+
+  const pointerObject = pointer as UTSJSONObject
+  const output = [] as any[]
+  const seriesValuesValue = pointerObject.get('seriesValues')
+
+  if (Array.isArray(seriesValuesValue)) {
+    ;(seriesValuesValue as any[]).forEach((item : any) => {
+      const itemObject = item as UTSJSONObject
+      pushTooltipTextLines(
+        output,
+        applyTooltipTemplate(`${formatter}`, itemObject.get('seriesName'), pointerObject.get('name'), itemObject.get('value')),
+        itemObject.get('color')
+      )
+    })
+  } else {
+    pushTooltipTextLines(
+      output,
+      applyTooltipTemplate(`${formatter}`, pointerObject.get('seriesName'), pointerObject.get('name'), pointerObject.get('value')),
+      pointerObject.get('color')
+    )
+  }
+
+  return output.length > 0 ? output : defaultLines
+}
