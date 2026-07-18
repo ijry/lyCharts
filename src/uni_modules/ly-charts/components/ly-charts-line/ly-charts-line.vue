@@ -22,7 +22,12 @@ import {
   createEventRegistry,
   applyLegendSelection,
   applyAxisDataWindow,
+  appendSeriesData,
+  clearItemState,
+  hasItemState,
+  setItemState,
   toggleLegendSelected,
+  toggleItemState,
   updateDataZoomOption,
   formatTooltipLines
 } from '../../libs/util/runtimeHelper.js';
@@ -61,6 +66,8 @@ const categoryCenters = ref([]);
 const currentOption = ref({});
 const disposed = ref(false);
 const loading = ref(false);
+const highlightState = ref({});
+const selectState = ref({});
 const eventRegistry = createEventRegistry();
 // 触摸相关信息
 const touchInfo = ref({
@@ -337,14 +344,19 @@ const drawSeries = (series, xAxisData, minY, maxY, adjustedYMin, adjustedYMax, x
       // 绘制数据点
       if (showSymbol) {
         ctx.value.setFillStyle(color);
-        points.forEach(point => {
+        points.forEach((point, dataIndex) => {
+          const selected = hasItemState(selectState.value, index, dataIndex);
+          const highlighted = hasItemState(highlightState.value, index, dataIndex);
+          const radius = selected ? 7 : (highlighted ? 6 : 4);
+          const innerRadius = selected ? 4 : (highlighted ? 3 : 2);
           ctx.value.beginPath();
-          ctx.value.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+          ctx.value.setFillStyle(selected ? '#ffffff' : color);
+          ctx.value.arc(point.x, point.y, radius, 0, 2 * Math.PI);
           ctx.value.fill();
           
           ctx.value.beginPath();
-          ctx.value.setFillStyle('#ffffff');
-          ctx.value.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+          ctx.value.setFillStyle(selected ? color : '#ffffff');
+          ctx.value.arc(point.x, point.y, innerRadius, 0, 2 * Math.PI);
           ctx.value.fill();
           
           ctx.value.setFillStyle(color);
@@ -757,8 +769,20 @@ const emitChartEvent = (eventName, payload) => {
 // 提供类似 ECharts 的 setOption 方法
 const setOption = (option, notMerge = false) => {
   if (disposed.value) return false;
+  if (notMerge === true) {
+    highlightState.value = {};
+    selectState.value = {};
+  }
   const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
   drawChart(nextOption);
+  return true;
+};
+
+const appendData = (payload = {}) => {
+  if (disposed.value) return false;
+  const result = appendSeriesData(currentOption.value || props.option, payload);
+  if (!result.changed) return false;
+  drawChart(result.option);
   return true;
 };
 
@@ -777,6 +801,8 @@ const clear = () => {
   activePointer.value = null;
   seriesData.value = [];
   categoryCenters.value = [];
+  highlightState.value = {};
+  selectState.value = {};
   if (ctx.value) {
     ctx.value.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
     ctx.value.draw && ctx.value.draw();
@@ -833,6 +859,30 @@ const updateActivePointerByDataIndex = (dataIndex, seriesIndex = 0) => {
   return true;
 };
 
+const applyItemAction = (action = {}) => {
+  const seriesIndex = action.seriesIndex || 0;
+  const dataIndex = action.dataIndex;
+  if (action.type === 'highlight') {
+    if (!setItemState(highlightState.value, seriesIndex, dataIndex, true)) return false;
+  } else if (action.type === 'downplay') {
+    clearItemState(highlightState.value, action.seriesIndex, action.dataIndex);
+  } else if (action.type === 'select') {
+    if (!setItemState(selectState.value, seriesIndex, dataIndex, true)) return false;
+  } else if (action.type === 'unselect') {
+    if (action.dataIndex == null) {
+      clearItemState(selectState.value);
+    } else if (!setItemState(selectState.value, seriesIndex, dataIndex, false)) {
+      return false;
+    }
+  } else if (action.type === 'toggleSelect') {
+    if (!toggleItemState(selectState.value, seriesIndex, dataIndex)) return false;
+  } else {
+    return false;
+  }
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
 const dispatchAction = (action = {}) => {
   if (disposed.value || !action || !action.type) return false;
   if (action.type === 'hideTip') {
@@ -857,6 +907,9 @@ const dispatchAction = (action = {}) => {
     drawChart(result.option);
     return true;
   }
+  if (['highlight', 'downplay', 'select', 'unselect', 'toggleSelect'].includes(action.type)) {
+    return applyItemAction(action);
+  }
   return false;
 };
 
@@ -875,6 +928,7 @@ onMounted(() => {
 // 导出需要在模板中使用的变量和方法
 defineExpose({
   setOption,
+  appendData,
   getOption,
   resize,
   clear,

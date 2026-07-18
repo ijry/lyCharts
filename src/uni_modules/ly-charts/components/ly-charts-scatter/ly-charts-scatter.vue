@@ -19,7 +19,12 @@ import {
   createEventRegistry,
   applyLegendSelection,
   applyAxisDataWindow,
+  appendSeriesData,
+  clearItemState,
+  hasItemState,
+  setItemState,
   toggleLegendSelected,
+  toggleItemState,
   updateDataZoomOption,
   formatTooltipLines
 } from '../../libs/util/runtimeHelper.js';
@@ -58,6 +63,8 @@ export default {
       currentOption: {},
       disposed: false,
       loading: false,
+      highlightState: {},
+      selectState: {},
       eventRegistry: createEventRegistry(),
       // 触摸相关信息
       touchInfo: {
@@ -315,8 +322,16 @@ export default {
         // 绘制散点
         if (points.length > 0) {
           this.ctx.setFillStyle(color);
-          points.forEach(point => {
-            this.drawSymbol(point.x, point.y, symbolSize, serie.symbol || 'circle');
+          points.forEach((point, pointIndex) => {
+            const selected = hasItemState(this.selectState, index, pointIndex);
+            const highlighted = hasItemState(this.highlightState, index, pointIndex);
+            const size = selected ? symbolSize + 6 : (highlighted ? symbolSize + 4 : symbolSize);
+            this.ctx.setFillStyle(selected ? '#0f172a' : color);
+            this.drawSymbol(point.x, point.y, size, serie.symbol || 'circle');
+            if (selected || highlighted) {
+              this.ctx.setFillStyle(color);
+              this.drawSymbol(point.x, point.y, Math.max(symbolSize, size - 4), serie.symbol || 'circle');
+            }
           });
         }
       });
@@ -539,8 +554,19 @@ export default {
     },
     setOption(option, notMerge = false) {
       if (this.disposed) return false;
+      if (notMerge === true) {
+        this.highlightState = {};
+        this.selectState = {};
+      }
       const nextOption = mergeOptions(this.currentOption || this.option, option, notMerge);
       this.drawChart(nextOption);
+      return true;
+    },
+    appendData(payload = {}) {
+      if (this.disposed) return false;
+      const result = appendSeriesData(this.currentOption || this.option, payload);
+      if (!result.changed) return false;
+      this.drawChart(result.option);
       return true;
     },
     
@@ -566,6 +592,8 @@ export default {
     clear() {
       this.activePointer = null;
       this.seriesData = [];
+      this.highlightState = {};
+      this.selectState = {};
       if (this.ctx) {
         this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
         this.ctx.draw && this.ctx.draw();
@@ -628,6 +656,29 @@ export default {
       this.drawChart(this.currentOption || this.option);
       return true;
     },
+    applyItemAction(action = {}) {
+      const seriesIndex = action.seriesIndex || 0;
+      const dataIndex = action.dataIndex;
+      if (action.type === 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false;
+      } else if (action.type === 'downplay') {
+        clearItemState(this.highlightState, action.seriesIndex, action.dataIndex);
+      } else if (action.type === 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false;
+      } else if (action.type === 'unselect') {
+        if (action.dataIndex == null) {
+          clearItemState(this.selectState);
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false;
+        }
+      } else if (action.type === 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false;
+      } else {
+        return false;
+      }
+      this.drawChart(this.currentOption || this.option);
+      return true;
+    },
     dispatchAction(action = {}) {
       if (this.disposed || !action || !action.type) return false;
       if (action.type === 'hideTip') {
@@ -651,6 +702,9 @@ export default {
         this.activePointer = null;
         this.drawChart(result.option);
         return true;
+      }
+      if (['highlight', 'downplay', 'select', 'unselect', 'toggleSelect'].includes(action.type)) {
+        return this.applyItemAction(action);
       }
       return false;
     }
