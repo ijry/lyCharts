@@ -32,7 +32,15 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick, getCurrentInstance } from 'vue';
-import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
+import {
+  normalizeOption,
+  mergeOptions,
+  createEventRegistry,
+  clearItemState,
+  hasItemState,
+  setItemState,
+  toggleItemState
+} from '../../libs/util/runtimeHelper.js';
 
 const instance = getCurrentInstance()!.proxy!;
 
@@ -97,6 +105,8 @@ const activePointer = ref(null);
 const currentOption = ref({});
 const disposed = ref(false);
 const loading = ref(false);
+const highlightState = ref({});
+const selectState = ref({});
 const eventRegistry = createEventRegistry();
 const touchInfo = ref({
   startX: 0,
@@ -277,6 +287,8 @@ const drawNativePie = () => {
     const item = data[i];
     const percent = item.value / total;
     const endAngle = startAngle + percent * 2 * Math.PI;
+    const selected = hasItemState(selectState.value, 0, i);
+    const highlighted = hasItemState(highlightState.value, 0, i);
     
     // 保存扇形角度信息
     sectorAngles.push({
@@ -320,6 +332,21 @@ const drawNativePie = () => {
       // 默认边框
       ctx.setStrokeStyle('#ffffff');
       ctx.setLineWidth(2);
+      ctx.stroke();
+    }
+
+    if (selected || highlighted) {
+      ctx.beginPath();
+      if (innerRadiusPx > 0) {
+        ctx.arc(centerX, centerY, outerRadiusPx + (selected ? 4 : 2), startAngle, endAngle);
+        ctx.arc(centerX, centerY, innerRadiusPx, endAngle, startAngle, true);
+      } else {
+        ctx.moveTo(centerX, centerY);
+        ctx.arc(centerX, centerY, outerRadiusPx + (selected ? 4 : 2), startAngle, endAngle);
+        ctx.closePath();
+      }
+      ctx.setStrokeStyle(selected ? '#0f172a' : '#ffffff');
+      ctx.setLineWidth(selected ? 4 : 2);
       ctx.stroke();
     }
     
@@ -850,6 +877,10 @@ const getChartInstance = () => {
 
 const setOption = (option, notMerge = false) => {
   if (disposed.value) return false;
+  if (notMerge === true) {
+    highlightState.value = {};
+    selectState.value = {};
+  }
   const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
   drawChart(nextOption);
   return true;
@@ -862,6 +893,8 @@ const getHeight = () => canvasHeight.value || 0;
 const clear = () => {
   activePointer.value = null;
   chartInstance.value = null;
+  highlightState.value = {};
+  selectState.value = {};
   const ctx = uni.createCanvasContext(cid, instance);
   if (ctx) {
     ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
@@ -927,6 +960,30 @@ const updateActivePointerByDataIndex = (dataIndex) => {
   return true;
 };
 
+const applyItemAction = (action = {}) => {
+  const seriesIndex = action.seriesIndex || 0;
+  const dataIndex = action.dataIndex;
+  if (action.type === 'highlight') {
+    if (!setItemState(highlightState.value, seriesIndex, dataIndex, true)) return false;
+  } else if (action.type === 'downplay') {
+    clearItemState(highlightState.value, action.seriesIndex, action.dataIndex);
+  } else if (action.type === 'select') {
+    if (!setItemState(selectState.value, seriesIndex, dataIndex, true)) return false;
+  } else if (action.type === 'unselect') {
+    if (action.dataIndex == null) {
+      clearItemState(selectState.value);
+    } else if (!setItemState(selectState.value, seriesIndex, dataIndex, false)) {
+      return false;
+    }
+  } else if (action.type === 'toggleSelect') {
+    if (!toggleItemState(selectState.value, seriesIndex, dataIndex)) return false;
+  } else {
+    return false;
+  }
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
 const dispatchAction = (action = {}) => {
   if (disposed.value || !action || !action.type) return false;
   if (action.type === 'hideTip') {
@@ -936,6 +993,9 @@ const dispatchAction = (action = {}) => {
   }
   if (action.type === 'showTip') {
     return updateActivePointerByDataIndex(action.dataIndex);
+  }
+  if (['highlight', 'downplay', 'select', 'unselect', 'toggleSelect'].includes(action.type)) {
+    return applyItemAction(action);
   }
   return false;
 };

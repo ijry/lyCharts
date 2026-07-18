@@ -13,7 +13,15 @@
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted, nextTick, getCurrentInstance } from 'vue';
-import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
+import {
+  normalizeOption,
+  mergeOptions,
+  createEventRegistry,
+  clearItemState,
+  hasItemState,
+  setItemState,
+  toggleItemState
+} from '../../libs/util/runtimeHelper.js';
 
 const instance = getCurrentInstance();
 
@@ -71,6 +79,8 @@ const activePointer = ref(null);
 const currentOption = ref({});
 const disposed = ref(false);
 const loading = ref(false);
+const highlightState = ref({});
+const selectState = ref({});
 const eventRegistry = createEventRegistry();
 const touchInfo = ref({
   startX: 0,
@@ -653,11 +663,20 @@ const drawRadarData = (ctx, centerX, centerY, maxRadius, indicators, data) => {
     
     // 绘制数据点
     for (let i = 0; i < points.length; i++) {
-      ctx.beginPath(); // 为每个点创建新路径
-      ctx.arc(points[i].x, points[i].y, 4, 0, 2 * Math.PI);
-      ctx.setFillStyle('#ffffff');
-      ctx.setStrokeStyle(color);
-      ctx.setLineWidth(2);
+      const selected = hasItemState(selectState.value, s, i);
+      const highlighted = hasItemState(highlightState.value, s, i);
+      const radius = selected ? 6 : (highlighted ? 5 : 3);
+      if (selected || highlighted) {
+        ctx.beginPath();
+        ctx.arc(points[i].x, points[i].y, radius + 2, 0, 2 * Math.PI);
+        ctx.setFillStyle('#ffffff');
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(points[i].x, points[i].y, radius, 0, 2 * Math.PI);
+      ctx.setFillStyle(color);
+      ctx.setStrokeStyle(selected ? '#0f172a' : color);
+      ctx.setLineWidth(selected ? 3 : 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -1097,6 +1116,10 @@ const getChartInstance = () => {
 
 const setOption = (option, notMerge = false) => {
   if (disposed.value) return false;
+  if (notMerge === true) {
+    highlightState.value = {};
+    selectState.value = {};
+  }
   const nextOption = mergeOptions(currentOption.value || props.option, option, notMerge);
   drawChart(nextOption);
   return true;
@@ -1109,6 +1132,8 @@ const getHeight = () => canvasHeight.value || 0;
 const clear = () => {
   activePointer.value = null;
   chartInstance.value = null;
+  highlightState.value = {};
+  selectState.value = {};
   const ctx = uni.createCanvasContext(cid, instance);
   if (ctx) {
     ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
@@ -1172,6 +1197,30 @@ const updateActivePointerByDataIndex = (dataIndex) => {
   return true;
 };
 
+const applyItemAction = (action = {}) => {
+  const seriesIndex = action.seriesIndex || 0;
+  const dataIndex = action.dataIndex;
+  if (action.type === 'highlight') {
+    if (!setItemState(highlightState.value, seriesIndex, dataIndex, true)) return false;
+  } else if (action.type === 'downplay') {
+    clearItemState(highlightState.value, action.seriesIndex, action.dataIndex);
+  } else if (action.type === 'select') {
+    if (!setItemState(selectState.value, seriesIndex, dataIndex, true)) return false;
+  } else if (action.type === 'unselect') {
+    if (action.dataIndex == null) {
+      clearItemState(selectState.value);
+    } else if (!setItemState(selectState.value, seriesIndex, dataIndex, false)) {
+      return false;
+    }
+  } else if (action.type === 'toggleSelect') {
+    if (!toggleItemState(selectState.value, seriesIndex, dataIndex)) return false;
+  } else {
+    return false;
+  }
+  drawChart(currentOption.value || props.option);
+  return true;
+};
+
 const dispatchAction = (action = {}) => {
   if (disposed.value || !action || !action.type) return false;
   if (action.type === 'hideTip') {
@@ -1181,6 +1230,9 @@ const dispatchAction = (action = {}) => {
   }
   if (action.type === 'showTip') {
     return updateActivePointerByDataIndex(action.dataIndex);
+  }
+  if (['highlight', 'downplay', 'select', 'unselect', 'toggleSelect'].includes(action.type)) {
+    return applyItemAction(action);
   }
   return false;
 };
