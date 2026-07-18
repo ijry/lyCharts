@@ -17,7 +17,14 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
-import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
+import {
+  normalizeOption,
+  mergeOptions,
+  clearItemState,
+  hasItemState,
+  setItemState,
+  toggleItemState
+} from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-radar',
@@ -48,6 +55,8 @@ export default {
       currentOption: {} as any,
       disposed: false,
       loading: false,
+      highlightState: {} as UTSJSONObject,
+      selectState: {} as UTSJSONObject,
       eventHandlers: {} as UTSJSONObject,
       touchInfo: {
         startX: 0,
@@ -272,11 +281,25 @@ export default {
         this.ctx.setStrokeStyle(color)
         this.ctx.setLineWidth(2)
         this.ctx.stroke()
-        points.forEach((point : any) => {
+        points.forEach((point : any, dataIndex : number) => {
+          const selected = hasItemState(this.selectState, seriesIndex, dataIndex)
+          const highlighted = hasItemState(this.highlightState, seriesIndex, dataIndex)
+          const pointRadius = selected ? 6 : (highlighted ? 5 : 3)
+          if (selected || highlighted) {
+            this.ctx.beginPath()
+            this.ctx.setFillStyle('#ffffff')
+            this.ctx.arc(point.x, point.y, pointRadius + 2, 0, Math.PI * 2)
+            this.ctx.fill()
+          }
           this.ctx.beginPath()
           this.ctx.setFillStyle(color)
-          this.ctx.arc(point.x, point.y, 3, 0, Math.PI * 2)
+          this.ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2)
           this.ctx.fill()
+          if (selected) {
+            this.ctx.setStrokeStyle('#0f172a')
+            this.ctx.setLineWidth(2)
+            this.ctx.stroke()
+          }
         })
         this.seriesPoints.push({
           seriesIndex,
@@ -507,6 +530,10 @@ export default {
     },
     setOption(option : any, notMerge : boolean = false) {
       if (this.disposed) return false
+      if (notMerge === true) {
+        this.highlightState = {} as UTSJSONObject
+        this.selectState = {} as UTSJSONObject
+      }
       const nextOption = mergeOptions(this.currentOption != null ? this.currentOption : this.option, option, notMerge)
       this.drawChart(nextOption)
       return true
@@ -523,6 +550,8 @@ export default {
       this.activePointer = null
       this.seriesPoints = [] as any[]
       this.radarMeta = null
+      this.highlightState = {} as UTSJSONObject
+      this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
         this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
         this.ctx.draw()
@@ -596,6 +625,30 @@ export default {
       this.drawChart(this.currentOption)
       return true
     },
+    applyItemAction(action : any) : boolean {
+      const typeValue = action.type
+      const seriesIndex = action.seriesIndex != null ? action.seriesIndex : 0
+      const dataIndex = action.dataIndex
+      if (`${typeValue}` == 'highlight') {
+        if (!setItemState(this.highlightState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'downplay') {
+        clearItemState(this.highlightState, action.seriesIndex, action.dataIndex)
+      } else if (`${typeValue}` == 'select') {
+        if (!setItemState(this.selectState, seriesIndex, dataIndex, true)) return false
+      } else if (`${typeValue}` == 'unselect') {
+        if (dataIndex == null) {
+          clearItemState(this.selectState)
+        } else if (!setItemState(this.selectState, seriesIndex, dataIndex, false)) {
+          return false
+        }
+      } else if (`${typeValue}` == 'toggleSelect') {
+        if (!toggleItemState(this.selectState, seriesIndex, dataIndex)) return false
+      } else {
+        return false
+      }
+      this.drawChart(this.currentOption)
+      return true
+    },
     dispatchAction(action : any) : boolean {
       if (this.disposed || action == null) return false
       const typeValue = action.type
@@ -606,6 +659,9 @@ export default {
       }
       if (`${typeValue}` == 'showTip') {
         return this.updateActivePointerByDataIndex(action.dataIndex, typeof action.seriesIndex == 'number' ? action.seriesIndex : 0)
+      }
+      if (`${typeValue}` == 'highlight' || `${typeValue}` == 'downplay' || `${typeValue}` == 'select' || `${typeValue}` == 'unselect' || `${typeValue}` == 'toggleSelect') {
+        return this.applyItemAction(action)
       }
       return false
     }
