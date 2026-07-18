@@ -16,7 +16,16 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { nextTick, getCurrentInstance } from 'vue';
 import chartHelper from '../../libs/util/chartHelper.js';
-import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
+import {
+  normalizeOption,
+  mergeOptions,
+  createEventRegistry,
+  applyLegendSelection,
+  applyAxisDataWindow,
+  toggleLegendSelected,
+  updateDataZoomOption,
+  formatTooltipLines
+} from '../../libs/util/runtimeHelper.js';
 const instance = getCurrentInstance()
 
 // 定义props
@@ -101,7 +110,7 @@ const drawChart = (option) => {
   if (!ctx.value || !option) return;
   const normalizedOption = normalizeOption(option);
   currentOption.value = normalizedOption;
-  option = normalizedOption;
+  option = applyAxisDataWindow(applyLegendSelection(normalizedOption)).option;
   
   try {
     // 清空画布
@@ -595,7 +604,7 @@ const getLineTooltipLines = (pointer) => {
       fontSize: 11
     });
   });
-  return lines;
+  return formatTooltipLines(currentOption.value, pointer, lines, 'line', true);
 };
 
 const drawLineAxisPointer = () => {
@@ -833,6 +842,20 @@ const dispatchAction = (action = {}) => {
   }
   if (action.type === 'showTip') {
     return updateActivePointerByDataIndex(action.dataIndex, action.seriesIndex || 0);
+  }
+  if (action.type === 'legendToggleSelect') {
+    const result = toggleLegendSelected(currentOption.value || props.option, action.name);
+    if (!result.changed) return false;
+    activePointer.value = null;
+    drawChart(result.option);
+    return true;
+  }
+  if (action.type === 'dataZoom') {
+    const result = updateDataZoomOption(currentOption.value || props.option, action);
+    if (!result.changed) return false;
+    activePointer.value = null;
+    drawChart(result.option);
+    return true;
   }
   return false;
 };

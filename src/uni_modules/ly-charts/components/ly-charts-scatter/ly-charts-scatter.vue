@@ -13,7 +13,16 @@
 
 <script>
 import chartHelper from '../../libs/util/chartHelper.js';
-import { normalizeOption, mergeOptions, createEventRegistry } from '../../libs/util/runtimeHelper.js';
+import {
+  normalizeOption,
+  mergeOptions,
+  createEventRegistry,
+  applyLegendSelection,
+  applyAxisDataWindow,
+  toggleLegendSelected,
+  updateDataZoomOption,
+  formatTooltipLines
+} from '../../libs/util/runtimeHelper.js';
 
 export default {
   name: 'ly-charts-scatter',
@@ -112,6 +121,7 @@ export default {
       if (!this.ctx || !option) return;
       option = normalizeOption(option);
       this.currentOption = option;
+      option = applyAxisDataWindow(applyLegendSelection(option)).option;
       
       try {
         // 清空画布
@@ -402,10 +412,11 @@ export default {
       return best;
     },
     getScatterTooltipLines(pointer) {
-      return [
+      const defaultLines = [
         { text: String(pointer.name ?? ''), color: '#f8fafc', fontSize: 12 },
         { text: `${pointer.seriesName || ''} ${this.formatScatterValue(pointer.value)}`, color: pointer.color || '#e2e8f0', fontSize: 11 }
       ];
+      return formatTooltipLines(this.currentOption, pointer, defaultLines, 'scatter', true);
     },
     drawScatterAxisPointer() {
       if (!this.activePointer || !this.ctx || !this.plotGrid) return;
@@ -626,6 +637,20 @@ export default {
       }
       if (action.type === 'showTip') {
         return this.updateActivePointerByDataIndex(action.dataIndex, action.seriesIndex || 0);
+      }
+      if (action.type === 'legendToggleSelect') {
+        const result = toggleLegendSelected(this.currentOption || this.option, action.name);
+        if (!result.changed) return false;
+        this.activePointer = null;
+        this.drawChart(result.option);
+        return true;
+      }
+      if (action.type === 'dataZoom') {
+        const result = updateDataZoomOption(this.currentOption || this.option, action);
+        if (!result.changed) return false;
+        this.activePointer = null;
+        this.drawChart(result.option);
+        return true;
       }
       return false;
     }
