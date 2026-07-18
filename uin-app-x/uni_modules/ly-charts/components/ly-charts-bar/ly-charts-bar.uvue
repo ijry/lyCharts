@@ -47,7 +47,15 @@ interface LyBarCanvasRef {
 }
 
 import chartHelper from '../../libs/uvue/chartHelper.uts'
-import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
+import {
+  normalizeOption,
+  mergeOptions,
+  applyLegendSelection,
+  applyAxisDataWindow,
+  toggleLegendSelected,
+  updateDataZoomOption,
+  formatTooltipLines
+} from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-bar',
@@ -189,6 +197,8 @@ export default {
       try {
         option = normalizeOption(option)
         this.currentOption = option
+        const renderOptionResult = applyAxisDataWindow(applyLegendSelection(option))
+        option = renderOptionResult.get('option')
         const ctx = this.ctx
         if (ctx == null) {
           return
@@ -619,7 +629,7 @@ export default {
           fontSize: 11
         })
       })
-      return lines
+      return formatTooltipLines(this.currentOption, pointer, lines, 'bar')
     },
     drawBarAxisPointer() {
       const ctx = this.ctx
@@ -963,6 +973,20 @@ export default {
       }
       if (`${typeValue}` == 'showTip') {
         return this.updateActivePointerByDataIndex(actionObject.get('dataIndex'), typeof actionObject.get('seriesIndex') == 'number' ? actionObject.get('seriesIndex') as number : 0)
+      }
+      if (`${typeValue}` == 'legendToggleSelect') {
+        const result = toggleLegendSelected(this.currentOption != null ? this.currentOption : this.option, actionObject.get('name'))
+        if (result.get('changed') !== true) return false
+        this.activePointer = null
+        this.drawChart(result.get('option'))
+        return true
+      }
+      if (`${typeValue}` == 'dataZoom') {
+        const result = updateDataZoomOption(this.currentOption != null ? this.currentOption : this.option, action)
+        if (result.get('changed') !== true) return false
+        this.activePointer = null
+        this.drawChart(result.get('option'))
+        return true
       }
       return false
     }

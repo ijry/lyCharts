@@ -17,7 +17,15 @@
 
 <script lang="uts">
 import chartHelper from '../../libs/uvue/chartHelper.uts'
-import { normalizeOption, mergeOptions } from '../../libs/uvue/runtimeHelper.uts'
+import {
+  normalizeOption,
+  mergeOptions,
+  applyLegendSelection,
+  applyAxisDataWindow,
+  toggleLegendSelected,
+  updateDataZoomOption,
+  formatTooltipLines
+} from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
   name: 'ly-charts-scatter',
@@ -98,6 +106,8 @@ export default {
       try {
         option = normalizeOption(option)
         this.currentOption = option
+        const renderOptionResult = applyAxisDataWindow(applyLegendSelection(option))
+        option = renderOptionResult.get('option')
         this.grid = { top: 10, right: 20, bottom: 25, left: 50 }
         this.ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
         if (option.backgroundColor) {
@@ -325,10 +335,11 @@ export default {
       return best
     },
     getScatterTooltipLines(pointer : any) : any[] {
-      return [
+      const defaultLines = [
         { text: String(pointer.name != null ? pointer.name : ''), color: '#f8fafc', fontSize: 12 },
         { text: `${pointer.seriesName || ''} ${this.formatScatterValue(pointer.value)}`, color: pointer.color || '#e2e8f0', fontSize: 11 }
       ] as any[]
+      return formatTooltipLines(this.currentOption, pointer, defaultLines, 'scatter')
     },
     drawScatterAxisPointer() {
       if (!this.activePointer || !this.ctx || !this.plotGrid) return
@@ -561,6 +572,20 @@ export default {
       }
       if (`${typeValue}` == 'showTip') {
         return this.updateActivePointerByDataIndex(action.dataIndex, typeof action.seriesIndex == 'number' ? action.seriesIndex : 0)
+      }
+      if (`${typeValue}` == 'legendToggleSelect') {
+        const result = toggleLegendSelected(this.currentOption != null ? this.currentOption : this.option, action.name)
+        if (result.get('changed') !== true) return false
+        this.activePointer = null
+        this.drawChart(result.get('option'))
+        return true
+      }
+      if (`${typeValue}` == 'dataZoom') {
+        const result = updateDataZoomOption(this.currentOption != null ? this.currentOption : this.option, action)
+        if (result.get('changed') !== true) return false
+        this.activePointer = null
+        this.drawChart(result.get('option'))
+        return true
       }
       return false
     }
