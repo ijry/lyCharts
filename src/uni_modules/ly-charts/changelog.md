@@ -1,3 +1,12 @@
+## 26.2.5
+feat: 增强 ECharts 运行时 item action 和 appendData 能力
+
+- line/bar/scatter 支持 dispatchAction 的 highlight/downplay
+- line/bar/scatter 支持 select/unselect/toggleSelect 运行时选中状态
+- line/bar/scatter 支持 appendData({ seriesIndex, data }) 追加数据
+- pie/radar 支持数据项高亮和选中视觉状态
+- 同步 uni-app Vue、uvue、uin-app-x 实现和文档说明
+
 ## 26.2.4
 feat: 增强 ECharts 运行时 API 兼容能力
 
