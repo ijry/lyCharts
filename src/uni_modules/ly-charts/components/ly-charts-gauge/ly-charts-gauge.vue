@@ -1,13 +1,15 @@
 <template>
 	<view class="ly-charts-gauge">
-		<canvas 
-			:id="canvasId" 
-			:canvas-id="canvasId" 
-			:style="{width: canvasWidth + 'px', height: canvasHeight + 'px'}"
+		<ly-canvas
+			ref="canvasRef"
+			:canvas-id="canvasId"
+			:width="canvasWidth"
+			:height="canvasHeight"
+			@ready="handleCanvasReady"
 			@touchstart="handleTouchStart"
 			@touchmove="handleTouchMove"
 			@touchend="handleTouchEnd"
-		></canvas>
+		/>
 	</view>
 </template>
 
@@ -41,6 +43,8 @@ const emit = defineEmits(['click', 'tooltipShow']);
 
 // 响应式数据
 const canvasId = ref('chart-gauge' + Date.now());
+const canvasRef = ref(null);
+const ctx = ref(null);
 const canvasWidth = ref(300);
 const canvasHeight = ref(300);
 // 修改: progressValue改为数组，支持多个数据项
@@ -70,6 +74,22 @@ watch(() => props.option, (newVal) => {
 	if (!disposed.value) updateChart(newVal);
 }, { deep: true });
 
+const parseSize = (value, fallback = 300) => {
+	if (typeof value === 'number') {
+		return value;
+	}
+	if (typeof value === 'string') {
+		if (value.endsWith('rpx') || value.endsWith('upx')) {
+			return uni.upx2px(parseInt(value));
+		}
+		if (value.endsWith('px')) {
+			return parseInt(value);
+		}
+		return parseInt(value) || fallback;
+	}
+	return fallback;
+};
+
 /**
  * 初始化图表
  * @author jry <ijry@qq.com>
@@ -77,13 +97,30 @@ watch(() => props.option, (newVal) => {
  */
 const init = () => {
 	// 获取容器尺寸
-	canvasWidth.value = Number(props.width);
-	canvasHeight.value = Number(props.height);
+	canvasWidth.value = parseSize(props.width, 300);
+	canvasHeight.value = parseSize(props.height, 300);
 	
 	// 延迟确保DOM渲染完成
 	setTimeout(() => {
-		updateChart(props.option);
+		const canvas = canvasRef.value;
+		if (canvas && typeof canvas.refresh === 'function') {
+			canvas.refresh();
+		} else {
+			updateChart(props.option);
+		}
 	}, 100);
+};
+
+const handleCanvasReady = (event) => {
+	const canvas = canvasRef.value;
+	if (!canvas) {
+		console.error('无法获取canvas绘图上下文');
+		return;
+	}
+	ctx.value = canvas;
+	canvasWidth.value = event.width || canvas.getWidth();
+	canvasHeight.value = event.height || canvas.getHeight();
+	updateChart(props.option);
 };
 
 /**
@@ -93,9 +130,9 @@ const init = () => {
  */
 const drawChart = () => {
 	if (disposed.value) return;
-	const ctx = uni.createCanvasContext(canvasId.value);
+	if (!ctx.value) return;
 	// 使用uview-plus自己的实现方式绘制仪表盘
-	drawGauge(ctx);
+	drawGauge(ctx.value);
 };
 
 /**
@@ -122,7 +159,8 @@ const angleToRadBase = (angle) => {
  * @created 2025-08-05
  */
 const drawGauge = (ctx) => {
-	const { width, height } = props;
+	const width = canvasWidth.value || parseSize(props.width, 300);
+	const height = canvasHeight.value || parseSize(props.height, 300);
 	const centerX = width / 2;
 	const centerY = height / 2;
 	const option = currentOption.value || normalizeOption(props.option || {});
@@ -824,9 +862,11 @@ const getHeight = () => canvasHeight.value || 0;
 const clear = () => {
 	activePointer.value = null;
 	gaugeMeta.value = null;
-	const ctx = uni.createCanvasContext(canvasId.value);
-	ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
-	ctx.draw && ctx.draw();
+	const canvasCtx = ctx.value;
+	if (canvasCtx) {
+		canvasCtx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+		canvasCtx.draw && canvasCtx.draw();
+	}
 	return true;
 };
 
@@ -848,16 +888,17 @@ const showLoading = (textOrOptions = 'Loading...') => {
 	if (disposed.value) return false;
 	loading.value = true;
 	const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
-	const ctx = uni.createCanvasContext(canvasId.value);
-	ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
-	ctx.setFillStyle('rgba(255,255,255,0.86)');
-	ctx.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
-	ctx.setFillStyle('#64748b');
-	ctx.setFontSize && ctx.setFontSize(14);
-	ctx.setTextAlign && ctx.setTextAlign('center');
-	ctx.setTextBaseline && ctx.setTextBaseline('middle');
-	ctx.fillText(text, canvasWidth.value / 2, canvasHeight.value / 2);
-	ctx.draw && ctx.draw();
+	const canvasCtx = ctx.value;
+	if (!canvasCtx) return false;
+	canvasCtx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+	canvasCtx.setFillStyle('rgba(255,255,255,0.86)');
+	canvasCtx.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
+	canvasCtx.setFillStyle('#64748b');
+	canvasCtx.setFontSize && canvasCtx.setFontSize(14);
+	canvasCtx.setTextAlign && canvasCtx.setTextAlign('center');
+	canvasCtx.setTextBaseline && canvasCtx.setTextBaseline('middle');
+	canvasCtx.fillText(text, canvasWidth.value / 2, canvasHeight.value / 2);
+	canvasCtx.draw && canvasCtx.draw();
 	return true;
 };
 

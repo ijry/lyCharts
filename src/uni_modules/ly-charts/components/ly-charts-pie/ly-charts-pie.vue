@@ -1,5 +1,5 @@
 <template>
-  <view class="ly-charts-pie" :style="{width: width}">
+  <view class="ly-charts-pie" :id="rootId" :style="{width: width}">
     <!-- 标题 -->
     <view 
       v-if="option.title && option.title.show !== false" 
@@ -19,14 +19,16 @@
       >{{ option.title.subtext }}</text>
     </view>
     
-    <canvas 
-      :id="cid" 
-      :canvas-id="cid" 
-      :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
+    <ly-canvas
+      ref="canvasRef"
+      :canvas-id="cid"
+      :width="canvasWidth || 100"
+      :height="canvasHeight"
       @touchstart="handleTouchStart"
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
-    ></canvas>
+      @ready="handleCanvasReady"
+    />
   </view>
 </template>
 
@@ -72,6 +74,7 @@ const emit = defineEmits(['click', 'tooltipShow']);
 
 // 生成唯一ID
 const cid = 'ly-charts-pie-' + Math.random().toString(36).substr(2);
+const rootId = `${cid}-root`;
 
 // 解析单位的辅助函数，支持rpx、px和数字
 const parseUnit = (value) => {
@@ -100,6 +103,8 @@ const canvasWidth = ref(typeof props.width === 'string' && props.width.indexOf('
   (typeof props.width === 'number' ? props.width : parseUnit(props.width)));
 const canvasHeight = ref(typeof props.height === 'string' ? parseUnit(props.height) : props.height);
 const isMount = ref(false);
+const canvasRef = ref<any>(null);
+const ctx = ref<any>(null);
 const chartInstance = ref(null);
 const activePointer = ref(null);
 const currentOption = ref({});
@@ -119,19 +124,20 @@ const TAP_SLOP = 8;
 // 获取画布尺寸
 const getCanvasSize = () => {
   return new Promise((resolve) => {
+    const shouldMeasureWidth = typeof props.width === 'string' && props.width.indexOf('%') !== -1;
     // 如果canvasWidth已经为数字，直接返回
-    if (typeof canvasWidth.value === 'number' && canvasWidth.value > 0) {
+    if (!shouldMeasureWidth && typeof canvasWidth.value === 'number' && canvasWidth.value > 0) {
       resolve();
       return;
     }
     
     // 修复：在 setup 上下文中使用正确的 selector 查询方式
     const query = uni.createSelectorQuery().in(instance);
-    query.select('#' + cid)
+    query.select('#' + rootId)
       .boundingClientRect((res) => {
-        if (res) {
-          canvasWidth.value = res.width || props.width;
-          canvasHeight.value = res.height || props.height;
+        if (res && res.width) {
+          canvasWidth.value = res.width;
+          canvasHeight.value = parseUnit(props.height);
         } else {
           // 改进宽度计算逻辑，支持rpx单位
           canvasWidth.value = typeof props.width === 'string' && props.width.indexOf('%') !== -1 ? 
@@ -143,6 +149,29 @@ const getCanvasSize = () => {
       })
       .exec();
   });
+};
+
+const getCanvasContext = () => ctx.value;
+
+const refreshCanvas = () => {
+  const canvas = canvasRef.value;
+  if (canvas && typeof canvas.refresh === 'function') {
+    canvas.refresh();
+    return true;
+  }
+  return false;
+};
+
+const handleCanvasReady = (event) => {
+  const canvas = canvasRef.value;
+  if (!canvas) {
+    console.error('无法获取canvas绘图上下文');
+    return;
+  }
+  ctx.value = canvas;
+  canvasWidth.value = event.width || canvas.getWidth();
+  canvasHeight.value = event.height || canvas.getHeight();
+  drawChart();
 };
 
 // 绘制图表
@@ -157,9 +186,8 @@ const drawChart = (option = props.option) => {
 
 // 使用原生Canvas绘制饼图
 const drawNativePie = () => {
-  // #ifndef APP-NVUE
-  // 修复：在 setup 上下文中正确创建 canvas context
-  const ctx = uni.createCanvasContext(cid, instance);
+  const ctx = getCanvasContext();
+  if (!ctx) return;
   
   // 清空画布
   ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
@@ -895,7 +923,7 @@ const clear = () => {
   chartInstance.value = null;
   highlightState.value = {};
   selectState.value = {};
-  const ctx = uni.createCanvasContext(cid, instance);
+  const ctx = getCanvasContext();
   if (ctx) {
     ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
     ctx.draw && ctx.draw();
@@ -920,7 +948,8 @@ const showLoading = (textOrOptions = 'Loading...') => {
   if (disposed.value) return false;
   loading.value = true;
   const text = typeof textOrOptions === 'string' ? textOrOptions : (textOrOptions.text || 'Loading...');
-  const ctx = uni.createCanvasContext(cid, instance);
+  const ctx = getCanvasContext();
+  if (!ctx) return false;
   ctx.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
   ctx.setFillStyle('rgba(255,255,255,0.86)');
   ctx.fillRect(0, 0, canvasWidth.value, canvasHeight.value);
@@ -1014,7 +1043,7 @@ watch(
 // 初始化
 const init = () => {
   getCanvasSize().then(() => {
-    drawChart();
+    refreshCanvas();
   });
 };
 
