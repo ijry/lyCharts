@@ -1,13 +1,17 @@
 <template>
   <view class="ly-charts-scatter" :style="{ width: containerWidth, height: containerHeight }">
-    <canvas 
-      class="chart-canvas" 
-      :id="canvasId" 
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
       :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
       @touchstart="handleTouchStart"
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
-    ></canvas>
+    />
   </view>
 </template>
 
@@ -99,28 +103,22 @@ export default {
   },
   methods: {
     initCanvas() {
-      try {
-        const query = uni.createSelectorQuery().in(this);
-        query.select('#' + this.canvasId).boundingClientRect((res) => {
-          if (res) {
-            this.canvasWidth = res.width;
-            this.canvasHeight = res.height;
-            
-            // 创建canvas上下文
-            this.ctx = uni.createCanvasContext(this.canvasId, this);
-            if (!this.ctx) {
-              console.error('无法获取canvas绘图上下文');
-              return;
-            }
-            
-            this.drawChart(this.option);
-          } else {
-            console.error('无法获取canvas信息');
-          }
-        }).exec();
-      } catch (error) {
-        console.error('初始化canvas失败:', error);
+      const canvasRef = this.$refs.canvasRef;
+      if (canvasRef && typeof canvasRef.refresh === 'function') {
+        canvasRef.refresh();
       }
+    },
+
+    handleCanvasReady(event) {
+      const canvasRef = this.$refs.canvasRef;
+      if (!canvasRef) {
+        console.error('无法获取canvas绘图上下文');
+        return;
+      }
+      this.ctx = canvasRef;
+      this.canvasWidth = event.width || canvasRef.getWidth();
+      this.canvasHeight = event.height || canvasRef.getHeight();
+      this.drawChart(this.option);
     },
     
     drawChart(option) {

@@ -1,20 +1,24 @@
 <!-- components/ly-charts-line/ly-charts-line.vue -->
 <template>
   <view class="ly-charts-line" :style="{ width: containerWidth, height: containerHeight }">
-    <canvas 
-      class="chart-canvas" 
-      :id="canvasId" 
+    <ly-canvas
+      ref="canvasRef"
+      class="chart-canvas"
       :canvas-id="canvasId"
+      width="100"
+      height="100"
+      :use-root-height-and-width="true"
+      @ready="handleCanvasReady"
       @touchstart="handleTouchStart"
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
-    ></canvas>
+    />
   </view>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
-import { nextTick, getCurrentInstance } from 'vue';
+import { nextTick } from 'vue';
 import chartHelper from '../../libs/util/chartHelper.js';
 import {
   normalizeOption,
@@ -31,7 +35,6 @@ import {
   updateDataZoomOption,
   formatTooltipLines
 } from '../../libs/util/runtimeHelper.js';
-const instance = getCurrentInstance()
 
 // 定义props
 const props = defineProps({
@@ -54,6 +57,7 @@ const props = defineProps({
 
 // 响应式数据
 const canvasId = ref('line-chart-' + Date.now());
+const canvasRef = ref(null);
 const ctx = ref(null);
 const canvasWidth = ref(0);
 const canvasHeight = ref(0);
@@ -88,28 +92,22 @@ const containerWidth = computed(() => {
 
 // 方法定义
 const initCanvas = () => {
-  try {
-    const query = uni.createSelectorQuery().in(instance);
-    query.select('#' + canvasId.value).boundingClientRect((res) => {
-      if (res) {
-        canvasWidth.value = res.width;
-        canvasHeight.value = res.height;
-        
-        // 创建canvas上下文
-        ctx.value = uni.createCanvasContext(canvasId.value, instance);
-        if (!ctx.value) {
-          console.error('无法获取canvas绘图上下文');
-          return;
-        }
-        
-        drawChart(props.option);
-      } else {
-        console.error('无法获取canvas信息');
-      }
-    }).exec();
-  } catch (error) {
-    console.error('初始化canvas失败:', error);
+  const canvas = canvasRef.value;
+  if (canvas && typeof canvas.refresh === 'function') {
+    canvas.refresh();
   }
+};
+
+const handleCanvasReady = (event) => {
+  const canvas = canvasRef.value;
+  if (!canvas) {
+    console.error('无法获取canvas绘图上下文');
+    return;
+  }
+  ctx.value = canvas;
+  canvasWidth.value = event.width || canvas.getWidth();
+  canvasHeight.value = event.height || canvas.getHeight();
+  drawChart(props.option);
 };
 
 const drawChart = (option) => {
