@@ -1,3 +1,11 @@
+## 26.2.6
+feat: 普通 Vue 图表统一使用公共 ly-canvas
+
+- line、bar、scatter 普通 Vue 组件改为通过公共 ly-canvas 初始化画布。
+- pie、radar、gauge 普通 Vue 组件改为复用公共 ly-canvas 绘图上下文。
+- 微信小程序端继续由公共 ly-canvas 启用 type="2d" canvas 模式。
+- 同步文档说明普通 Vue、uvue 和 uni-app-x 图表的公共画布层行为。
+
 ## 26.2.5
 feat: 增强 ECharts 运行时 item action 和 appendData 能力
 
