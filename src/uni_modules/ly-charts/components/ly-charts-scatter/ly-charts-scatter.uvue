@@ -29,7 +29,12 @@ import {
   toggleLegendSelected,
   toggleItemState,
   updateDataZoomOption,
-  formatTooltipLines
+  formatTooltipLines,
+  createCartesianCoordSys,
+  convertCartesianToPixel,
+  convertCartesianFromPixel,
+  containCartesianPixel,
+  isSupportedCartesianFinder
 } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
@@ -59,6 +64,7 @@ export default {
       seriesData: [] as any[],
       activePointer: null as any,
       plotGrid: null as any,
+      coordSys: null as any,
       currentOption: {} as any,
       disposed: false,
       loading: false,
@@ -159,6 +165,14 @@ export default {
           width: this.canvasWidth - this.grid.left - this.grid.right,
           height: this.canvasHeight - this.grid.top - this.grid.bottom
         }
+        this.coordSys = createCartesianCoordSys({
+          chartType: 'scatter',
+          grid: this.plotGrid,
+          minX: range.minX,
+          maxX: range.maxX,
+          minY: range.minY,
+          maxY: range.maxY
+        })
         if (this.activePointer) {
           this.drawScatterAxisPointer()
           this.drawScatterTooltipBox()
@@ -250,7 +264,8 @@ export default {
                 y,
                 value: [xValue, yValue],
                 name: value[2] || `(${xValue}, ${yValue})`,
-                seriesName: serie.name || `Series ${index}`
+                seriesName: serie.name || `Series ${index}`,
+                symbolSize
               })
             }
           })
@@ -510,6 +525,7 @@ export default {
     clear() : boolean {
       this.activePointer = null
       this.seriesData = [] as any[]
+      this.coordSys = null
       this.highlightState = {} as UTSJSONObject
       this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
@@ -565,6 +581,20 @@ export default {
       this.eventHandlers.set(eventName, next)
       return true
     },
+
+    convertToPixel(finder : any, value : any) : any {
+      if (this.disposed || !isSupportedCartesianFinder(finder)) return null
+      return convertCartesianToPixel(this.coordSys, value)
+    },
+    convertFromPixel(finder : any, value : any) : any {
+      if (this.disposed || !isSupportedCartesianFinder(finder)) return null
+      return convertCartesianFromPixel(this.coordSys, value)
+    },
+    containPixel(finder : any, value : any) : boolean {
+      if (this.disposed) return false
+      return containCartesianPixel(this.coordSys, this.seriesData, finder, value)
+    },
+
     emitChartEvent(eventName : string, payload : any) {
       this.$emit(eventName, payload)
       const current = this.eventHandlers.get(eventName)

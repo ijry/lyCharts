@@ -29,7 +29,12 @@ import {
   toggleLegendSelected,
   toggleItemState,
   updateDataZoomOption,
-  formatTooltipLines
+  formatTooltipLines,
+  createCartesianCoordSys,
+  convertCartesianToPixel,
+  convertCartesianFromPixel,
+  containCartesianPixel,
+  isSupportedCartesianFinder
 } from '../../libs/uvue/runtimeHelper.uts'
 
 export default {
@@ -60,6 +65,7 @@ export default {
       activePointer: null as any,
       plotGrid: null as any,
       categoryCenters: [] as number[],
+      coordSys: null as any,
       currentOption: {} as any,
       disposed: false,
       loading: false,
@@ -184,6 +190,13 @@ export default {
         }
         this.categoryCenters = (xAxisData || []).map((_: any, i: number) => {
           return this.grid.left + xAxisPadding + (xAxisData.length > 1 ? (i / (xAxisData.length - 1)) * paddedChartWidth : 0)
+        })
+        this.coordSys = createCartesianCoordSys({
+          chartType: 'line',
+          grid: this.plotGrid,
+          categoryCenters: this.categoryCenters,
+          minY: chartHelper.adjustedYMin,
+          maxY: chartHelper.adjustedYMax
         })
 
         if (this.activePointer) {
@@ -675,6 +688,7 @@ export default {
       this.activePointer = null
       this.seriesData = [] as any[]
       this.categoryCenters = [] as number[]
+      this.coordSys = null
       this.highlightState = {} as UTSJSONObject
       this.selectState = {} as UTSJSONObject
       if (this.ctx != null) {
@@ -730,6 +744,20 @@ export default {
       this.eventHandlers.set(eventName, next)
       return true
     },
+
+    convertToPixel(finder : any, value : any) : any {
+      if (this.disposed || !isSupportedCartesianFinder(finder)) return null
+      return convertCartesianToPixel(this.coordSys, value)
+    },
+    convertFromPixel(finder : any, value : any) : any {
+      if (this.disposed || !isSupportedCartesianFinder(finder)) return null
+      return convertCartesianFromPixel(this.coordSys, value)
+    },
+    containPixel(finder : any, value : any) : boolean {
+      if (this.disposed) return false
+      return containCartesianPixel(this.coordSys, this.seriesData, finder, value)
+    },
+
     emitChartEvent(eventName : string, payload : any) {
       this.$emit(eventName, payload)
       const current = this.eventHandlers.get(eventName)
