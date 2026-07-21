@@ -1,3 +1,10 @@
+## 26.2.7
+feat: 笛卡尔图坐标转换运行时 API
+
+- line/bar/scatter 新增 convertToPixel、convertFromPixel、containPixel
+- 基于最近一次绘制的坐标系快照换算，兼容主直角坐标系 finder
+- 同步 Vue、uvue、uin-app-x 实现与文档说明
+
 ## 26.2.6
 feat: 普通 Vue 图表统一使用公共 ly-canvas
 
