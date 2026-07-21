@@ -383,3 +383,216 @@ export function appendSeriesData(option, payload = {}) {
   nextOption.series[seriesIndex] = seriesItem;
   return { option: nextOption, changed: true };
 }
+
+function toFiniteNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+export function normalizeCoordPair(value) {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    if (value.length < 2) return null;
+    const x = toFiniteNumber(value[0]);
+    const y = toFiniteNumber(value[1]);
+    if (x == null || y == null) return null;
+    return [x, y];
+  }
+  if (typeof value === 'object') {
+    const x = toFiniteNumber(value.x ?? value[0]);
+    const y = toFiniteNumber(value.y ?? value[1]);
+    if (x == null || y == null) return null;
+    return [x, y];
+  }
+  return null;
+}
+
+export function isSupportedCartesianFinder(finder) {
+  if (finder == null || finder === false) return true;
+  if (typeof finder !== 'object') return false;
+  const axisKeys = ['xAxisIndex', 'yAxisIndex', 'gridIndex'];
+  for (const key of axisKeys) {
+    if (Object.prototype.hasOwnProperty.call(finder, key)) {
+      const index = Number(finder[key]);
+      if (!Number.isInteger(index) || index !== 0) return false;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(finder, 'seriesIndex')) {
+    const seriesIndex = Number(finder.seriesIndex);
+    if (!Number.isInteger(seriesIndex) || seriesIndex < 0) return false;
+  }
+  return true;
+}
+
+export function getSeriesIndexFromFinder(finder) {
+  if (finder == null || typeof finder !== 'object') return null;
+  if (!Object.prototype.hasOwnProperty.call(finder, 'seriesIndex')) return null;
+  const seriesIndex = Number(finder.seriesIndex);
+  if (!Number.isInteger(seriesIndex) || seriesIndex < 0) return null;
+  return seriesIndex;
+}
+
+export function createCartesianCoordSys(input = {}) {
+  const grid = input.grid;
+  if (!grid) return null;
+  const left = toFiniteNumber(grid.left);
+  const top = toFiniteNumber(grid.top);
+  const width = toFiniteNumber(grid.width);
+  const height = toFiniteNumber(grid.height);
+  const minY = toFiniteNumber(input.minY);
+  const maxY = toFiniteNumber(input.maxY);
+  if (
+    left == null || top == null || width == null || height == null ||
+    minY == null || maxY == null || width <= 0 || height <= 0
+  ) {
+    return null;
+  }
+
+  const chartType = input.chartType || 'line';
+  const categoryCenters = Array.isArray(input.categoryCenters)
+    ? input.categoryCenters.map(item => toFiniteNumber(item)).filter(item => item != null)
+    : [];
+  const minX = toFiniteNumber(input.minX);
+  const maxX = toFiniteNumber(input.maxX);
+
+  if (chartType === 'scatter') {
+    if (minX == null || maxX == null || maxX === minX || maxY === minY) return null;
+  } else if (!categoryCenters.length || maxY === minY) {
+    return null;
+  }
+
+  return {
+    type: 'cartesian2d',
+    chartType,
+    grid: { left, top, width, height },
+    categoryCenters,
+    minX,
+    maxX,
+    minY,
+    maxY
+  };
+}
+
+function mapCategoryIndexToPixelX(categoryCenters, dataX) {
+  if (!Array.isArray(categoryCenters) || categoryCenters.length === 0) return null;
+  if (categoryCenters.length === 1) return categoryCenters[0];
+  const maxIndex = categoryCenters.length - 1;
+  const clamped = Math.min(Math.max(dataX, 0), maxIndex);
+  const leftIndex = Math.floor(clamped);
+  const rightIndex = Math.min(leftIndex + 1, maxIndex);
+  if (leftIndex === rightIndex) return categoryCenters[leftIndex];
+  const ratio = clamped - leftIndex;
+  return categoryCenters[leftIndex] + (categoryCenters[rightIndex] - categoryCenters[leftIndex]) * ratio;
+}
+
+function mapPixelXToCategoryIndex(categoryCenters, pixelX) {
+  if (!Array.isArray(categoryCenters) || categoryCenters.length === 0) return null;
+  if (categoryCenters.length === 1) return 0;
+  if (pixelX <= categoryCenters[0]) return 0;
+  const last = categoryCenters.length - 1;
+  if (pixelX >= categoryCenters[last]) return last;
+  for (let i = 0; i < last; i++) {
+    const left = categoryCenters[i];
+    const right = categoryCenters[i + 1];
+    if (pixelX >= left && pixelX <= right) {
+      if (right === left) return i;
+      return i + (pixelX - left) / (right - left);
+    }
+  }
+  return last;
+}
+
+function mapValueToPixelY(grid, minY, maxY, value) {
+  const ratio = (value - minY) / (maxY - minY);
+  return grid.top + grid.height - ratio * grid.height;
+}
+
+function mapPixelYToValue(grid, minY, maxY, pixelY) {
+  const ratio = (grid.top + grid.height - pixelY) / grid.height;
+  return minY + ratio * (maxY - minY);
+}
+
+export function convertCartesianToPixel(coordSys, value) {
+  if (!coordSys || coordSys.type !== 'cartesian2d') return null;
+  const pair = normalizeCoordPair(value);
+  if (!pair) return null;
+  const [dataX, dataY] = pair;
+  const grid = coordSys.grid;
+  let pixelX = null;
+  if (coordSys.chartType === 'scatter') {
+    if (coordSys.maxX === coordSys.minX) return null;
+    const ratioX = (dataX - coordSys.minX) / (coordSys.maxX - coordSys.minX);
+    pixelX = grid.left + ratioX * grid.width;
+  } else {
+    pixelX = mapCategoryIndexToPixelX(coordSys.categoryCenters, dataX);
+  }
+  if (pixelX == null || coordSys.maxY === coordSys.minY) return null;
+  const pixelY = mapValueToPixelY(grid, coordSys.minY, coordSys.maxY, dataY);
+  if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) return null;
+  return [pixelX, pixelY];
+}
+
+export function convertCartesianFromPixel(coordSys, value) {
+  if (!coordSys || coordSys.type !== 'cartesian2d') return null;
+  const pair = normalizeCoordPair(value);
+  if (!pair) return null;
+  const [pixelX, pixelY] = pair;
+  const grid = coordSys.grid;
+  let dataX = null;
+  if (coordSys.chartType === 'scatter') {
+    if (coordSys.maxX === coordSys.minX || grid.width === 0) return null;
+    dataX = coordSys.minX + ((pixelX - grid.left) / grid.width) * (coordSys.maxX - coordSys.minX);
+  } else {
+    dataX = mapPixelXToCategoryIndex(coordSys.categoryCenters, pixelX);
+  }
+  if (dataX == null || coordSys.maxY === coordSys.minY || grid.height === 0) return null;
+  const dataY = mapPixelYToValue(grid, coordSys.minY, coordSys.maxY, pixelY);
+  if (!Number.isFinite(dataX) || !Number.isFinite(dataY)) return null;
+  return [dataX, dataY];
+}
+
+function pointInRect(x, y, rect) {
+  return x >= rect.left &&
+    x <= rect.left + rect.width &&
+    y >= rect.top &&
+    y <= rect.top + rect.height;
+}
+
+function isNearSeriesPoint(chartType, point, pixelX, pixelY) {
+  if (!point) return false;
+  if (chartType === 'bar' && point.barWidth != null) {
+    const width = Number(point.barWidth) || 0;
+    const height = Math.abs(Number(point.height != null ? point.height : point.barHeight) || 0);
+    const top = Number(point.y) || 0;
+    const left = Number(point.x) || 0;
+    const bottom = point.height != null ? top + (Number(point.height) || 0) : top + height;
+    const minY = Math.min(top, bottom);
+    const maxY = Math.max(top, bottom);
+    return pixelX >= left && pixelX <= left + width && pixelY >= minY && pixelY <= maxY;
+  }
+  const radius = chartType === 'scatter'
+    ? Math.max(Number(point.symbolSize) || 0, 8)
+    : 10;
+  const dx = (Number(point.x) || 0) - pixelX;
+  const dy = (Number(point.y) || 0) - pixelY;
+  return (dx * dx + dy * dy) <= radius * radius;
+}
+
+export function containCartesianPixel(coordSys, seriesData, finder, value) {
+  if (!coordSys || coordSys.type !== 'cartesian2d') return false;
+  if (!isSupportedCartesianFinder(finder)) return false;
+  const pair = normalizeCoordPair(value);
+  if (!pair) return false;
+  const [pixelX, pixelY] = pair;
+  if (!pointInRect(pixelX, pixelY, coordSys.grid)) return false;
+
+  const seriesIndex = getSeriesIndexFromFinder(finder);
+  if (seriesIndex == null) return true;
+  if (!Array.isArray(seriesData) || !seriesData[seriesIndex]) return false;
+  const series = seriesData[seriesIndex];
+  const points = Array.isArray(series.points) ? series.points : [];
+  for (let i = 0; i < points.length; i++) {
+    if (isNearSeriesPoint(coordSys.chartType, points[i], pixelX, pixelY)) return true;
+  }
+  return false;
+}
