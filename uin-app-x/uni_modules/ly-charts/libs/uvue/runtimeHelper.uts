@@ -508,3 +508,301 @@ export function appendSeriesData(option : any, payload : any) : UTSJSONObject {
   result.set('changed', true)
   return result
 }
+
+function toFiniteNumber(value : any) : number | null {
+  if (value == null) return null
+  const num = Number(value)
+  if (!isFinite(num)) return null
+  return num
+}
+
+export function normalizeCoordPair(value : any) : number[] | null {
+  if (value == null) return null
+  if (Array.isArray(value)) {
+    const arr = value as any[]
+    if (arr.length < 2) return null
+    const x = toFiniteNumber(arr[0])
+    const y = toFiniteNumber(arr[1])
+    if (x == null || y == null) return null
+    return [x as number, y as number]
+  }
+  if (typeof value == 'object') {
+    const obj = value as UTSJSONObject
+    let x = toFiniteNumber(obj.get('x'))
+    let y = toFiniteNumber(obj.get('y'))
+    if (x == null) x = toFiniteNumber(obj.get('0'))
+    if (y == null) y = toFiniteNumber(obj.get('1'))
+    if (x == null || y == null) return null
+    return [x as number, y as number]
+  }
+  return null
+}
+
+export function isSupportedCartesianFinder(finder : any) : boolean {
+  if (finder == null || finder === false) return true
+  if (typeof finder != 'object') return false
+  const finderObject = finder as UTSJSONObject
+  const axisKeys = ['xAxisIndex', 'yAxisIndex', 'gridIndex'] as string[]
+  for (let i = 0; i < axisKeys.length; i++) {
+    const key = axisKeys[i]
+    const raw = finderObject.get(key)
+    if (raw != null) {
+      const index = Number(raw)
+      if (!isFinite(index) || Math.floor(index) != index || index != 0) return false
+    }
+  }
+  const seriesIndexValue = finderObject.get('seriesIndex')
+  if (seriesIndexValue != null) {
+    const seriesIndex = Number(seriesIndexValue)
+    if (!isFinite(seriesIndex) || Math.floor(seriesIndex) != seriesIndex || seriesIndex < 0) return false
+  }
+  return true
+}
+
+export function getSeriesIndexFromFinder(finder : any) : number | null {
+  if (finder == null || typeof finder != 'object') return null
+  const finderObject = finder as UTSJSONObject
+  const seriesIndexValue = finderObject.get('seriesIndex')
+  if (seriesIndexValue == null) return null
+  const seriesIndex = Number(seriesIndexValue)
+  if (!isFinite(seriesIndex) || Math.floor(seriesIndex) != seriesIndex || seriesIndex < 0) return null
+  return seriesIndex
+}
+
+export function createCartesianCoordSys(input : any) : UTSJSONObject | null {
+  if (input == null || typeof input != 'object') return null
+  const inputObject = input as UTSJSONObject
+  const gridValue = inputObject.get('grid')
+  if (gridValue == null || typeof gridValue != 'object') return null
+  const gridObject = gridValue as UTSJSONObject
+  const left = toFiniteNumber(gridObject.get('left'))
+  const top = toFiniteNumber(gridObject.get('top'))
+  const width = toFiniteNumber(gridObject.get('width'))
+  const height = toFiniteNumber(gridObject.get('height'))
+  const minY = toFiniteNumber(inputObject.get('minY'))
+  const maxY = toFiniteNumber(inputObject.get('maxY'))
+  if (left == null || top == null || width == null || height == null || minY == null || maxY == null) return null
+  if ((width as number) <= 0 || (height as number) <= 0) return null
+
+  const chartTypeValue = inputObject.get('chartType')
+  const chartType = chartTypeValue != null ? `${chartTypeValue}` : 'line'
+  const centersValue = inputObject.get('categoryCenters')
+  const categoryCenters = [] as number[]
+  if (Array.isArray(centersValue)) {
+    ;(centersValue as any[]).forEach((item : any) => {
+      const num = toFiniteNumber(item)
+      if (num != null) categoryCenters.push(num as number)
+    })
+  }
+  const minX = toFiniteNumber(inputObject.get('minX'))
+  const maxX = toFiniteNumber(inputObject.get('maxX'))
+
+  if (chartType == 'scatter') {
+    if (minX == null || maxX == null || maxX == minX || maxY == minY) return null
+  } else if (categoryCenters.length == 0 || maxY == minY) {
+    return null
+  }
+
+  const grid = {} as UTSJSONObject
+  grid.set('left', left)
+  grid.set('top', top)
+  grid.set('width', width)
+  grid.set('height', height)
+
+  const result = {} as UTSJSONObject
+  result.set('type', 'cartesian2d')
+  result.set('chartType', chartType)
+  result.set('grid', grid)
+  result.set('categoryCenters', categoryCenters)
+  result.set('minX', minX)
+  result.set('maxX', maxX)
+  result.set('minY', minY)
+  result.set('maxY', maxY)
+  return result
+}
+
+function mapCategoryIndexToPixelX(categoryCenters : number[], dataX : number) : number | null {
+  if (categoryCenters.length == 0) return null
+  if (categoryCenters.length == 1) return categoryCenters[0]
+  const maxIndex = categoryCenters.length - 1
+  let clamped = dataX
+  if (clamped < 0) clamped = 0
+  if (clamped > maxIndex) clamped = maxIndex as number
+  const leftIndex = Math.floor(clamped)
+  let rightIndex = leftIndex + 1
+  if (rightIndex > maxIndex) rightIndex = maxIndex
+  if (leftIndex == rightIndex) return categoryCenters[leftIndex]
+  const ratio = clamped - leftIndex
+  return categoryCenters[leftIndex] + (categoryCenters[rightIndex] - categoryCenters[leftIndex]) * ratio
+}
+
+function mapPixelXToCategoryIndex(categoryCenters : number[], pixelX : number) : number | null {
+  if (categoryCenters.length == 0) return null
+  if (categoryCenters.length == 1) return 0
+  if (pixelX <= categoryCenters[0]) return 0
+  const last = categoryCenters.length - 1
+  if (pixelX >= categoryCenters[last]) return last as number
+  for (let i = 0; i < last; i++) {
+    const left = categoryCenters[i]
+    const right = categoryCenters[i + 1]
+    if (pixelX >= left && pixelX <= right) {
+      if (right == left) return i as number
+      return i + (pixelX - left) / (right - left)
+    }
+  }
+  return last as number
+}
+
+function mapValueToPixelY(grid : UTSJSONObject, minY : number, maxY : number, value : number) : number {
+  const top = grid.get('top') as number
+  const height = grid.get('height') as number
+  const ratio = (value - minY) / (maxY - minY)
+  return top + height - ratio * height
+}
+
+function mapPixelYToValue(grid : UTSJSONObject, minY : number, maxY : number, pixelY : number) : number {
+  const top = grid.get('top') as number
+  const height = grid.get('height') as number
+  const ratio = (top + height - pixelY) / height
+  return minY + ratio * (maxY - minY)
+}
+
+export function convertCartesianToPixel(coordSys : any, value : any) : number[] | null {
+  if (coordSys == null || typeof coordSys != 'object') return null
+  const coord = coordSys as UTSJSONObject
+  if (`${coord.get('type')}` != 'cartesian2d') return null
+  const pair = normalizeCoordPair(value)
+  if (pair == null) return null
+  const dataX = pair[0]
+  const dataY = pair[1]
+  const gridValue = coord.get('grid')
+  if (gridValue == null || typeof gridValue != 'object') return null
+  const grid = gridValue as UTSJSONObject
+  const chartType = `${coord.get('chartType')}`
+  const minY = toFiniteNumber(coord.get('minY'))
+  const maxY = toFiniteNumber(coord.get('maxY'))
+  if (minY == null || maxY == null || maxY == minY) return null
+
+  let pixelX : number | null = null
+  if (chartType == 'scatter') {
+    const minX = toFiniteNumber(coord.get('minX'))
+    const maxX = toFiniteNumber(coord.get('maxX'))
+    const left = grid.get('left') as number
+    const width = grid.get('width') as number
+    if (minX == null || maxX == null || maxX == minX) return null
+    const ratioX = (dataX - (minX as number)) / ((maxX as number) - (minX as number))
+    pixelX = left + ratioX * width
+  } else {
+    const centersValue = coord.get('categoryCenters')
+    const centers = Array.isArray(centersValue) ? centersValue as number[] : [] as number[]
+    pixelX = mapCategoryIndexToPixelX(centers, dataX)
+  }
+  if (pixelX == null) return null
+  const pixelY = mapValueToPixelY(grid, minY as number, maxY as number, dataY)
+  if (!isFinite(pixelX as number) || !isFinite(pixelY)) return null
+  return [pixelX as number, pixelY]
+}
+
+export function convertCartesianFromPixel(coordSys : any, value : any) : number[] | null {
+  if (coordSys == null || typeof coordSys != 'object') return null
+  const coord = coordSys as UTSJSONObject
+  if (`${coord.get('type')}` != 'cartesian2d') return null
+  const pair = normalizeCoordPair(value)
+  if (pair == null) return null
+  const pixelX = pair[0]
+  const pixelY = pair[1]
+  const gridValue = coord.get('grid')
+  if (gridValue == null || typeof gridValue != 'object') return null
+  const grid = gridValue as UTSJSONObject
+  const chartType = `${coord.get('chartType')}`
+  const minY = toFiniteNumber(coord.get('minY'))
+  const maxY = toFiniteNumber(coord.get('maxY'))
+  const height = grid.get('height') as number
+  if (minY == null || maxY == null || maxY == minY || height == 0) return null
+
+  let dataX : number | null = null
+  if (chartType == 'scatter') {
+    const minX = toFiniteNumber(coord.get('minX'))
+    const maxX = toFiniteNumber(coord.get('maxX'))
+    const left = grid.get('left') as number
+    const width = grid.get('width') as number
+    if (minX == null || maxX == null || maxX == minX || width == 0) return null
+    dataX = (minX as number) + ((pixelX - left) / width) * ((maxX as number) - (minX as number))
+  } else {
+    const centersValue = coord.get('categoryCenters')
+    const centers = Array.isArray(centersValue) ? centersValue as number[] : [] as number[]
+    dataX = mapPixelXToCategoryIndex(centers, pixelX)
+  }
+  if (dataX == null) return null
+  const dataY = mapPixelYToValue(grid, minY as number, maxY as number, pixelY)
+  if (!isFinite(dataX as number) || !isFinite(dataY)) return null
+  return [dataX as number, dataY]
+}
+
+function pointInRect(x : number, y : number, rect : UTSJSONObject) : boolean {
+  const left = rect.get('left') as number
+  const top = rect.get('top') as number
+  const width = rect.get('width') as number
+  const height = rect.get('height') as number
+  return x >= left && x <= left + width && y >= top && y <= top + height
+}
+
+function isNearSeriesPoint(chartType : string, point : any, pixelX : number, pixelY : number) : boolean {
+  if (point == null || typeof point != 'object') return false
+  const pointObject = point as UTSJSONObject
+  if (chartType == 'bar' && pointObject.get('barWidth') != null) {
+    const width = toFiniteNumber(pointObject.get('barWidth'))
+    const heightRaw = pointObject.get('height') != null ? pointObject.get('height') : pointObject.get('barHeight')
+    const height = Math.abs(toFiniteNumber(heightRaw) != null ? (toFiniteNumber(heightRaw) as number) : 0)
+    const top = toFiniteNumber(pointObject.get('y')) != null ? (toFiniteNumber(pointObject.get('y')) as number) : 0
+    const left = toFiniteNumber(pointObject.get('x')) != null ? (toFiniteNumber(pointObject.get('x')) as number) : 0
+    const heightValue = toFiniteNumber(pointObject.get('height'))
+    const bottom = heightValue != null ? top + (heightValue as number) : top + height
+    const minY = top < bottom ? top : bottom
+    const maxY = top > bottom ? top : bottom
+    const barWidth = width != null ? (width as number) : 0
+    return pixelX >= left && pixelX <= left + barWidth && pixelY >= minY && pixelY <= maxY
+  }
+  let radius = 10
+  if (chartType == 'scatter') {
+    const symbolSize = toFiniteNumber(pointObject.get('symbolSize'))
+    const size = symbolSize != null ? (symbolSize as number) : 0
+    radius = size > 8 ? size : 8
+  }
+  const px = toFiniteNumber(pointObject.get('x')) != null ? (toFiniteNumber(pointObject.get('x')) as number) : 0
+  const py = toFiniteNumber(pointObject.get('y')) != null ? (toFiniteNumber(pointObject.get('y')) as number) : 0
+  const dx = px - pixelX
+  const dy = py - pixelY
+  return (dx * dx + dy * dy) <= radius * radius
+}
+
+export function containCartesianPixel(coordSys : any, seriesData : any, finder : any, value : any) : boolean {
+  if (coordSys == null || typeof coordSys != 'object') return false
+  const coord = coordSys as UTSJSONObject
+  if (`${coord.get('type')}` != 'cartesian2d') return false
+  if (!isSupportedCartesianFinder(finder)) return false
+  const pair = normalizeCoordPair(value)
+  if (pair == null) return false
+  const pixelX = pair[0]
+  const pixelY = pair[1]
+  const gridValue = coord.get('grid')
+  if (gridValue == null || typeof gridValue != 'object') return false
+  if (!pointInRect(pixelX, pixelY, gridValue as UTSJSONObject)) return false
+
+  const seriesIndex = getSeriesIndexFromFinder(finder)
+  if (seriesIndex == null) return true
+  if (!Array.isArray(seriesData)) return false
+  const list = seriesData as any[]
+  if (seriesIndex >= list.length) return false
+  const series = list[seriesIndex]
+  if (series == null || typeof series != 'object') return false
+  const seriesObject = series as UTSJSONObject
+  const pointsValue = seriesObject.get('points')
+  const points = Array.isArray(pointsValue) ? pointsValue as any[] : [] as any[]
+  const chartType = `${coord.get('chartType')}`
+  for (let i = 0; i < points.length; i++) {
+    if (isNearSeriesPoint(chartType, points[i], pixelX, pixelY)) return true
+  }
+  return false
+}
+
