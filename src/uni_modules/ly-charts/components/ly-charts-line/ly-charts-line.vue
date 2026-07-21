@@ -33,7 +33,12 @@ import {
   toggleLegendSelected,
   toggleItemState,
   updateDataZoomOption,
-  formatTooltipLines
+  formatTooltipLines,
+  createCartesianCoordSys,
+  convertCartesianToPixel,
+  convertCartesianFromPixel,
+  containCartesianPixel,
+  isSupportedCartesianFinder
 } from '../../libs/util/runtimeHelper.js';
 
 // 定义props
@@ -67,6 +72,7 @@ const seriesData = ref([]);
 const activePointer = ref(null);
 const plotGrid = ref(null);
 const categoryCenters = ref([]);
+const coordSys = ref(null);
 const currentOption = ref({});
 const disposed = ref(false);
 const loading = ref(false);
@@ -218,6 +224,13 @@ const drawChart = (option) => {
     };
     categoryCenters.value = (xAxisData || []).map((_, i) => {
       return grid.value.left + xAxisPadding + (xAxisData.length > 1 ? (i / (xAxisData.length - 1)) * paddedChartWidth : 0);
+    });
+    coordSys.value = createCartesianCoordSys({
+      chartType: 'line',
+      grid: plotGrid.value,
+      categoryCenters: categoryCenters.value,
+      minY: chartHelper.adjustedYMin,
+      maxY: chartHelper.adjustedYMax
     });
 
     if (activePointer.value) {
@@ -799,6 +812,7 @@ const clear = () => {
   activePointer.value = null;
   seriesData.value = [];
   categoryCenters.value = [];
+  coordSys.value = null;
   highlightState.value = {};
   selectState.value = {};
   if (ctx.value) {
@@ -924,6 +938,21 @@ onMounted(() => {
 });
 
 // 导出需要在模板中使用的变量和方法
+const convertToPixel = (finder, value) => {
+  if (disposed.value || !isSupportedCartesianFinder(finder)) return null;
+  return convertCartesianToPixel(coordSys.value, value);
+};
+
+const convertFromPixel = (finder, value) => {
+  if (disposed.value || !isSupportedCartesianFinder(finder)) return null;
+  return convertCartesianFromPixel(coordSys.value, value);
+};
+
+const containPixel = (finder, value) => {
+  if (disposed.value) return false;
+  return containCartesianPixel(coordSys.value, seriesData.value, finder, value);
+};
+
 defineExpose({
   setOption,
   appendData,
@@ -937,7 +966,10 @@ defineExpose({
   getHeight,
   on,
   off,
-  dispatchAction
+  dispatchAction,
+  convertToPixel,
+  convertFromPixel,
+  containPixel
 });
 </script>
 
