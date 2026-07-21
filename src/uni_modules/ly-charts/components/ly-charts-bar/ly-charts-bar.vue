@@ -31,7 +31,12 @@ import {
   toggleLegendSelected,
   toggleItemState,
   updateDataZoomOption,
-  formatTooltipLines
+  formatTooltipLines,
+  createCartesianCoordSys,
+  convertCartesianToPixel,
+  convertCartesianFromPixel,
+  containCartesianPixel,
+  isSupportedCartesianFinder
 } from '../../libs/util/runtimeHelper.js';
 
 // 定义props
@@ -65,6 +70,7 @@ const seriesData = ref([]);
 const activePointer = ref(null);
 const plotGrid = ref(null);
 const categoryCenters = ref([]);
+const coordSys = ref(null);
 const currentOption = ref({});
 const disposed = ref(false);
 const loading = ref(false);
@@ -227,6 +233,13 @@ const drawChart = (option) => {
       centers.push(center);
     }
     categoryCenters.value = centers;
+    coordSys.value = createCartesianCoordSys({
+      chartType: 'bar',
+      grid: plotGrid.value,
+      categoryCenters: categoryCenters.value,
+      minY: chartHelper.adjustedYMin,
+      maxY: chartHelper.adjustedYMax
+    });
 
     if (activePointer.value) {
       drawBarAxisPointer();
@@ -1215,6 +1228,7 @@ const clear = () => {
   activePointer.value = null;
   seriesData.value = [];
   categoryCenters.value = [];
+  coordSys.value = null;
   highlightState.value = {};
   selectState.value = {};
   if (ctx.value) {
@@ -1407,6 +1421,21 @@ onMounted(() => {
 });
 
 // 导出需要在模板中使用的变量和方法
+const convertToPixel = (finder, value) => {
+  if (disposed.value || !isSupportedCartesianFinder(finder)) return null;
+  return convertCartesianToPixel(coordSys.value, value);
+};
+
+const convertFromPixel = (finder, value) => {
+  if (disposed.value || !isSupportedCartesianFinder(finder)) return null;
+  return convertCartesianFromPixel(coordSys.value, value);
+};
+
+const containPixel = (finder, value) => {
+  if (disposed.value) return false;
+  return containCartesianPixel(coordSys.value, seriesData.value, finder, value);
+};
+
 defineExpose({
   setOption,
   appendData,
@@ -1420,7 +1449,10 @@ defineExpose({
   getHeight,
   on,
   off,
-  dispatchAction
+  dispatchAction,
+  convertToPixel,
+  convertFromPixel,
+  containPixel
 });
 </script>
 
