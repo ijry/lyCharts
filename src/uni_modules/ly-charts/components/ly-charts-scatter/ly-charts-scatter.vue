@@ -30,7 +30,12 @@ import {
   toggleLegendSelected,
   toggleItemState,
   updateDataZoomOption,
-  formatTooltipLines
+  formatTooltipLines,
+  createCartesianCoordSys,
+  convertCartesianToPixel,
+  convertCartesianFromPixel,
+  containCartesianPixel,
+  isSupportedCartesianFinder
 } from '../../libs/util/runtimeHelper.js';
 
 export default {
@@ -64,6 +69,7 @@ export default {
       seriesData: [],
       activePointer: null,
       plotGrid: null,
+      coordSys: null,
       currentOption: {},
       disposed: false,
       loading: false,
@@ -194,6 +200,14 @@ export default {
           width: this.canvasWidth - this.grid.left - this.grid.right,
           height: this.canvasHeight - this.grid.top - this.grid.bottom
         };
+        this.coordSys = createCartesianCoordSys({
+          chartType: 'scatter',
+          grid: this.plotGrid,
+          minX,
+          maxX,
+          minY,
+          maxY
+        });
         if (this.activePointer) {
           this.drawScatterAxisPointer();
           this.drawScatterTooltipBox();
@@ -304,7 +318,8 @@ export default {
                 y, 
                 value: [xValue, yValue],
                 name: value[2] || `(${xValue}, ${yValue})`,
-                seriesName: serie.name || `Series ${index}`
+                seriesName: serie.name || `Series ${index}`,
+                symbolSize
               });
             }
           });
@@ -590,6 +605,7 @@ export default {
     clear() {
       this.activePointer = null;
       this.seriesData = [];
+      this.coordSys = null;
       this.highlightState = {};
       this.selectState = {};
       if (this.ctx) {
@@ -631,6 +647,18 @@ export default {
     },
     off(eventName, handler) {
       return this.eventRegistry.off(eventName, handler);
+    },
+    convertToPixel(finder, value) {
+      if (this.disposed || !isSupportedCartesianFinder(finder)) return null;
+      return convertCartesianToPixel(this.coordSys, value);
+    },
+    convertFromPixel(finder, value) {
+      if (this.disposed || !isSupportedCartesianFinder(finder)) return null;
+      return convertCartesianFromPixel(this.coordSys, value);
+    },
+    containPixel(finder, value) {
+      if (this.disposed) return false;
+      return containCartesianPixel(this.coordSys, this.seriesData, finder, value);
     },
     updateActivePointerByDataIndex(dataIndex, seriesIndex = 0) {
       const index = Number(dataIndex);
